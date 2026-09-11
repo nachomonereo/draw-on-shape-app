@@ -1,0 +1,9 @@
+{
+  "appId": "com.drawonshape.app",
+  "appName": "Draw on Shape",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

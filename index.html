@@ -1,0 +1,83 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Draw on Shape</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              moda: {
+                1: '#D9D7D8', // Light Grey
+                2: '#8FB6D9', // Light Blue
+                3: '#5185A6', // Medium Blue
+                4: '#F2B441', // Yellow/Orange (Primary)
+                5: '#A6450D', // Red/Brown (Destructive/Accent)
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <!-- SmoothVoxels Library -->
+    <script src="https://cdn.jsdelivr.net/gh/smoothvoxels/smoothvoxels@latest/smoothvoxels.min.js"></script>
+    <style>
+      /* Disable pull-to-refresh on mobile for better 3D control */
+      body {
+        overscroll-behavior-y: contain;
+        background-color: #ffffff;
+        color: #000000;
+        /* Crucial for pencil support: prevents browser from handling gestures */
+        touch-action: none; 
+      }
+      /* Custom scrollbar for panels - Light Mode */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f3f4f6; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #d1d5db; 
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #9ca3af; 
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "react": "https://esm.sh/react@18.2.0",
+    "@google/genai": "https://esm.sh/@google/genai@^0.1.1",
+    "lucide-react": "https://esm.sh/lucide-react@0.303.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.12?external=react,react-dom,three",
+    "three": "https://esm.sh/three@0.160.0",
+    "three/": "https://esm.sh/three@0.160.0/",
+    "three/examples/jsm/loaders/STLLoader": "https://esm.sh/three@0.160.0/examples/jsm/loaders/STLLoader?external=three",
+    "three/examples/jsm/loaders/GLTFLoader": "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader?external=three",
+    "three/examples/jsm/loaders/3DMLoader": "https://esm.sh/three@0.160.0/examples/jsm/loaders/3DMLoader?external=three",
+    "three/examples/jsm/exporters/STLExporter": "https://esm.sh/three@0.160.0/examples/jsm/exporters/STLExporter?external=three",
+    "three/examples/jsm/exporters/GLTFExporter": "https://esm.sh/three@0.160.0/examples/jsm/exporters/GLTFExporter?external=three",
+    "uuid": "https://esm.sh/uuid@9.0.1",
+    "@react-three/drei": "https://esm.sh/@react-three/drei@9.96.1?external=react,react-dom,three,@react-three/fiber",
+    "gsap": "https://esm.sh/gsap@3.12.5"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
