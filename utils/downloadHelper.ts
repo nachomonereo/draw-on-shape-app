@@ -1,12 +1,22 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+
+interface NativeFileSaverPlugin {
+    saveFile(options: {
+        fileName: string;
+        base64Data: string;
+        mimeType: string;
+    }): Promise<{ success: boolean; uri?: string; cancelled?: boolean }>;
+}
+
+const NativeFileSaver = registerPlugin<NativeFileSaverPlugin>('NativeFileSaver');
 
 export async function saveOrShareFile(
     blobOrDataUrl: Blob | string,
     filename: string,
     mimeType: string
-): Promise<{ success: boolean; path?: string }> {
+): Promise<{ success: boolean; path?: string; cancelled?: boolean }> {
     // 1. Native Capacitor (Android device / tablet)
     if (Capacitor.isNativePlatform()) {
         try {
@@ -17,38 +27,44 @@ export async function saveOrShareFile(
                 base64Data = await blobToBase64(blobOrDataUrl);
             }
 
-            let savedFile;
+            // PRIMARY: Android Storage Access Framework (SAF) folder picker ("Guardar en...")
             try {
-                // Save to public Documents directory so it's readily accessible in file managers
-                savedFile = await Filesystem.writeFile({
-                    path: filename,
-                    data: base64Data,
-                    directory: Directory.Documents,
-                    recursive: true
+                const res = await NativeFileSaver.saveFile({
+                    fileName: filename,
+                    base64Data,
+                    mimeType
                 });
-            } catch (fsErr) {
-                console.warn("Could not write to Directory.Documents, fallback to Directory.Cache", fsErr);
-                savedFile = await Filesystem.writeFile({
+
+                if (res.cancelled) {
+                    return { success: false, cancelled: true };
+                }
+
+                if (res.success && res.uri) {
+                    return { success: true, path: res.uri };
+                }
+            } catch (pluginErr) {
+                console.warn("NativeFileSaver failed, falling back to Share sheet:", pluginErr);
+            }
+
+            // FALLBACK 1: Save to Cache directory and open Share sheet with file attachment
+            try {
+                const savedFile = await Filesystem.writeFile({
                     path: filename,
                     data: base64Data,
                     directory: Directory.Cache,
                     recursive: true
                 });
-            }
 
-            // Open native Share sheet allowing the user to pick target app / folder (Drive, Files, WhatsApp, etc.)
-            try {
                 await Share.share({
                     title: filename,
-                    text: `Archivo exportado: ${filename}`,
-                    url: savedFile.uri,
-                    dialogTitle: `Guardar / Compartir ${filename}`
+                    files: [savedFile.uri],
+                    dialogTitle: `Guardar ${filename}`
                 });
-            } catch (shareErr) {
-                console.warn("Share dialog dismissed or not supported:", shareErr);
-            }
 
-            return { success: true, path: savedFile.uri };
+                return { success: true, path: savedFile.uri };
+            } catch (shareErr) {
+                console.warn("Share sheet fallback failed:", shareErr);
+            }
         } catch (e) {
             console.error("Capacitor save/share error:", e);
         }
@@ -80,7 +96,7 @@ export async function saveOrShareFile(
         } catch (pickerErr: any) {
             if (pickerErr.name === 'AbortError') {
                 // User cancelled the file picker dialog
-                return { success: false };
+                return { success: false, cancelled: true };
             }
             console.warn("showSaveFilePicker failed, falling back to download link:", pickerErr);
         }

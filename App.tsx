@@ -763,9 +763,13 @@ export default function App() {
             const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
             const safeName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
             const filename = `${safeName}-${Date.now()}.json`;
-            await saveOrShareFile(blob, filename, 'application/json');
+            const res = await saveOrShareFile(blob, filename, 'application/json');
             setIsMenuOpen(false);
-            showNotification("¡Proyecto exportado como JSON!");
+            if (res.cancelled) {
+                showNotification(language === 'en' ? "Save cancelled" : "Guardado cancelado");
+            } else if (res.success) {
+                showNotification(language === 'en' ? "Project exported as JSON!" : "¡Proyecto exportado como JSON!");
+            }
         } catch (e) {
             console.error("Save failed", e);
             alert("No se pudo guardar el proyecto.");
@@ -869,9 +873,14 @@ export default function App() {
                 blob = await exportRef.current.exportDXF();
                 mime = 'application/dxf';
             }
-            await saveOrShareFile(blob, finalName.endsWith(`.${ext}`) ? finalName : `${finalName}.${ext}`, mime);
+            const fullFilename = finalName.endsWith(`.${ext}`) ? finalName : `${finalName}.${ext}`;
+            const res = await saveOrShareFile(blob, fullFilename, mime);
             setIsMenuOpen(false);
-            showNotification(language === 'en' ? `File ${finalName} exported successfully!` : `¡Archivo ${finalName} exportado con éxito!`);
+            if (res.cancelled) {
+                showNotification(language === 'en' ? "Export cancelled" : "Exportación cancelada");
+            } else if (res.success) {
+                showNotification(language === 'en' ? `File ${fullFilename} exported successfully!` : `¡Archivo ${fullFilename} exportado con éxito!`);
+            }
         } catch (e) {
             console.error("Export error:", e);
             alert((language === 'en' ? "Error exporting scene: " : "Error al exportar la escena: ") + (e as Error).message);
@@ -906,8 +915,12 @@ export default function App() {
             const safeName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'drawing';
             const ext = options.format === 'image/png' ? 'png' : 'jpg';
             const filename = options.filename || `${safeName}-${Math.round(options.multiplier * 100)}pct.${ext}`;
-            await saveOrShareFile(dataUrl, filename, options.format);
-            showNotification(language === 'en' ? `Image ${filename} exported successfully!` : `¡Imagen ${filename} exportada con éxito!`);
+            const res = await saveOrShareFile(dataUrl, filename, options.format);
+            if (res.cancelled) {
+                showNotification(language === 'en' ? "Export cancelled" : "Exportación cancelada");
+            } else if (res.success) {
+                showNotification(language === 'en' ? `Image ${filename} exported successfully!` : `¡Imagen ${filename} exportada con éxito!`);
+            }
         } catch (e) {
             console.error("Snapshot failed", e);
             alert((language === 'en' ? "Error exporting image: " : "Error al exportar la imagen: ") + (e as Error).message);
