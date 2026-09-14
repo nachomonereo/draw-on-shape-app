@@ -35,7 +35,7 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     initialColor,
     color,
     title,
-    language = 'es',
+    language = 'en',
     onClose,
     onColorSelect,
     onChange,

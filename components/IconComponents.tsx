@@ -40,7 +40,7 @@ export const Icons = {
     Select: MousePointer2,
     Move, Rotate: Rotate3D, 
     Scale: Scaling, // 3D Expansion / Scaling icon instead of balance scale
-    AI: Sparkles, Chat: MessageSquare,
+    AI: Sparkles, Sparkles, Chat: MessageSquare,
     Add: Plus,
     Plus, // Direct Plus icon
     Minus,

@@ -21,7 +21,7 @@ export const ExportPNGModal: React.FC<ExportPNGModalProps> = ({
     onClose,
     onExport,
     defaultFilename,
-    language = 'es'
+    language = 'en'
 }) => {
     const isEn = language === 'en';
     const [scaleMultiplier, setScaleMultiplier] = useState<number>(1);

@@ -1624,7 +1624,7 @@ const SceneContent = ({
             const visibleHeight = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cameraFov / 2));
             setOrthoZoom(gl.domElement.clientHeight / Math.max(visibleHeight, 0.1));
             if (onFOVDisplayChange) {
-                onFOVDisplayChange(`${viewName} • Ortográfica (Sin Fuga)`);
+                onFOVDisplayChange(`${viewName} • Orthographic`);
                 if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
                 fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 2000);
             }
@@ -1636,17 +1636,17 @@ const SceneContent = ({
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'top') {
              camera.up.set(0, 0, -1);
-             setOrthoForAction('Vista Superior (Top)');
+             setOrthoForAction(language === 'en' ? 'Top View' : 'Vista Superior');
              gsap.to(camera.position, { x: 0, y: dist, z: 0.001, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'front') {
              camera.up.set(0, 1, 0);
-             setOrthoForAction('Vista Frontal (Front)');
+             setOrthoForAction(language === 'en' ? 'Front View' : 'Vista Frontal');
              gsap.to(camera.position, { x: 0, y: 0, z: dist, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'right') {
              camera.up.set(0, 1, 0);
-             setOrthoForAction('Vista Derecha (Right)');
+             setOrthoForAction(language === 'en' ? 'Right View' : 'Vista Derecha');
              gsap.to(camera.position, { x: dist, y: 0, z: 0, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'custom' && cameraAction.view) {

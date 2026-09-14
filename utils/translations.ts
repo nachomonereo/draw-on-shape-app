@@ -1,4 +1,4 @@
-﻿export type Language = 'es' | 'en';
+export type Language = 'es' | 'en';
 
 export const translations = {
     es: {
@@ -79,9 +79,9 @@ export const translations = {
     }
 };
 
-export const getTranslation = (lang: Language, key: keyof typeof translations['es'], params?: Record<string, string>): string => {
-    const dict = translations[lang] || translations.es;
-    let text = dict[key] || translations.es[key] || key;
+export const getTranslation = (lang: Language, key: keyof typeof translations['en'], params?: Record<string, string>): string => {
+    const dict = translations[lang] || translations.en;
+    let text = dict[key] || translations.en[key] || key;
     if (params) {
         Object.entries(params).forEach(([k, v]) => {
             text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), v);

@@ -37,7 +37,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     onLoadProject,
     onNewProject,
     onCaptureThumbnail,
-    language = 'es',
+    language = 'en',
     onLanguageChange,
     components = [],
     onInsertComponent,

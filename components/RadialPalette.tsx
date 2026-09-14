@@ -35,7 +35,7 @@ export const RadialPalette: React.FC<RadialPaletteProps> = ({
     color, 
     thickness, 
     smoothing, 
-    language = 'es',
+    language = 'en',
     onColorChange, 
     onThicknessChange, 
     onSmoothingChange,

@@ -540,9 +540,16 @@ export default function App() {
     const handleSmoothSelected = () => {
         if (selectedIds.length === 0) return;
         const currentObjs = sceneObjectsRef.current;
+        const allTargetIds = new Set<string>();
+        const collectIds = (id: string) => {
+            allTargetIds.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+        };
+        selectedIds.forEach(id => collectIds(id));
+
         let smoothedCount = 0;
         const updated = currentObjs.map(obj => {
-            if (selectedIds.includes(obj.id) && obj.type === 'stroke' && obj.strokeData && obj.strokeData.points.length > 2) {
+            if (allTargetIds.has(obj.id) && obj.type === 'stroke' && obj.strokeData && obj.strokeData.points.length > 2) {
                 smoothedCount++;
                 const pts = obj.strokeData.points;
                 const smoothedPts = pts.map((p, idx) => {
@@ -571,6 +578,70 @@ export default function App() {
             showNotification(language === 'en' ? `Smoothed ${smoothedCount} stroke(s)` : `Suavizado(s) ${smoothedCount} trazo(s)`);
         } else {
             showNotification(language === 'en' ? "Select strokes to smooth" : "Selecciona trazos para suavizar");
+        }
+    };
+
+    const handleSelectedStrokeThicknessChange = (newThickness: number, saveToHistory: boolean = false) => {
+        if (selectedIds.length === 0) return;
+        const currentObjs = sceneObjectsRef.current;
+        const allTargetIds = new Set<string>();
+        const collectIds = (id: string) => {
+            allTargetIds.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+        };
+        selectedIds.forEach(id => collectIds(id));
+
+        let changed = false;
+        const updated = currentObjs.map(obj => {
+            if (allTargetIds.has(obj.id) && obj.type === 'stroke' && obj.strokeData) {
+                changed = true;
+                return {
+                    ...obj,
+                    strokeData: {
+                        ...obj.strokeData,
+                        thickness: newThickness
+                    }
+                };
+            }
+            return obj;
+        });
+
+        if (changed) {
+            if (saveToHistory) {
+                addToHistory(updated);
+            } else {
+                updateSceneState(updated);
+            }
+        }
+    };
+
+    const handleSelectedOpacityChange = (newOpacity: number, saveToHistory: boolean = false) => {
+        if (selectedIds.length === 0) return;
+        const currentObjs = sceneObjectsRef.current;
+        const allTargetIds = new Set<string>();
+        const collectIds = (id: string) => {
+            allTargetIds.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+        };
+        selectedIds.forEach(id => collectIds(id));
+
+        const updated = currentObjs.map(obj => {
+            if (allTargetIds.has(obj.id)) {
+                return {
+                    ...obj,
+                    material: {
+                        ...obj.material,
+                        opacity: newOpacity
+                    }
+                };
+            }
+            return obj;
+        });
+
+        if (saveToHistory) {
+            addToHistory(updated);
+        } else {
+            updateSceneState(updated);
         }
     };
 
@@ -1078,7 +1149,7 @@ export default function App() {
             setLoftSelection(newSelection);
             setSelectedIds(newSelection);
             setActiveTool('loft-step-2');
-            setInstruction(`Loft: ${newSelection.length} curvas seleccionadas (Toca más o pulsa OK)`);
+            setInstruction(language === 'en' ? `Loft: ${newSelection.length} curve(s) selected (Tap more or press OK)` : `Loft: ${newSelection.length} curvas seleccionadas (Toca más o pulsa OK)`);
             return;
         }
 
@@ -1114,7 +1185,7 @@ export default function App() {
 
     const saveProjectInternal = (customName?: string) => {
         try {
-            const nameToUse = customName || projectName || "Sin Título";
+            const nameToUse = customName || projectName || (language === 'en' ? "Untitled" : "Sin Título");
             let thumbnail = '';
             if (exportRef.current) {
                 try {
@@ -1158,16 +1229,16 @@ export default function App() {
 
             localStorage.setItem(STORAGE_KEY, JSON.stringify(projectsList));
             setIsMenuOpen(false);
-            showNotification(`¡Proyecto '${nameToUse}' guardado internamente!`);
+            showNotification(language === 'en' ? `Project '${nameToUse}' saved internally!` : `¡Proyecto '${nameToUse}' guardado internamente!`);
         } catch (e) {
             console.error("Internal save error:", e);
-            showNotification("Error al guardar en memoria interna");
+            showNotification(language === 'en' ? "Error saving to internal memory" : "Error al guardar en memoria interna");
         }
     };
 
     // Project Name Handling
     const handleNewProject = () => {
-        if (confirm("¿Crear un nuevo proyecto? Los cambios no guardados se perderán.")) {
+        if (confirm(language === 'en' ? "Create a new project? Unsaved changes will be lost." : "¿Crear un nuevo proyecto? Los cambios no guardados se perderán.")) {
             updateSceneState(INITIAL_SCENE);
             setLayers(INITIAL_LAYERS);
             historyRef.current = [INITIAL_SCENE];
@@ -1255,9 +1326,9 @@ export default function App() {
                     }
                     if (data.backgroundColor) setBackgroundColor(data.backgroundColor);
                     if (typeof data.isGridVisible === 'boolean') setIsGridVisible(data.isGridVisible);
-                    showNotification(`¡Proyecto '${data.name || file.name}' cargado!`);
+                    showNotification(language === 'en' ? `Project '${data.name || file.name}' loaded!` : `¡Proyecto '${data.name || file.name}' cargado!`);
                 }
-            } catch (err) { console.error("Failed to load", err); alert("Archivo inválido"); }
+            } catch (err) { console.error("Failed to load", err); alert(language === 'en' ? "Invalid project file" : "Archivo inválido"); }
         };
         reader.readAsText(file);
         setIsMenuOpen(false);
@@ -1300,9 +1371,9 @@ export default function App() {
                     setSelectedIds([groupId]);
                     handleToolChange('select');
                     setTransformMode('translate');
-                    showNotification("Elementos insertados en la escena");
+                    showNotification(language === 'en' ? "Elements inserted into scene" : "Elementos insertados en la escena");
                 }
-            } catch (err) { console.error("Failed to insert", err); alert("Archivo inválido"); }
+            } catch (err) { console.error("Failed to insert", err); alert(language === 'en' ? "Invalid 3D file" : "Archivo inválido"); }
         };
         reader.readAsText(file);
         setIsMenuOpen(false);
@@ -1310,7 +1381,7 @@ export default function App() {
 
     const handleExport = async (format: 'stl' | 'glb' | 'dxf') => {
         if (!exportRef.current) {
-            alert("El exportador aún no está cargado.");
+            alert(language === 'en' ? "The exporter is not ready yet." : "El exportador aún no está cargado.");
             return;
         }
         try {
@@ -1744,7 +1815,7 @@ export default function App() {
                 <div className="absolute top-4 left-4 z-20 flex items-center gap-2 animate-in fade-in duration-200">
                      {/* Project Name Button */}
                      <div className="flex items-center gap-2 bg-white rounded-full px-1 py-1 border border-gray-200 shadow-sm hover:bg-gray-50 transition-colors">
-                         <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="p-2 rounded-full hover:bg-gray-100 text-moda-4" title="Menú principal">
+                         <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="p-2 rounded-full hover:bg-gray-100 text-moda-4" title="Main Menu">
                             <Icons.DrawOnShape size={20} />
                          </button>
                          
@@ -1776,33 +1847,33 @@ export default function App() {
                      <button 
                          onClick={() => setShowProjectsModal(true)} 
                          className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-blue-50 text-xs font-bold text-moda-3 rounded-full border border-gray-200 shadow-sm transition-all active:scale-95 cursor-pointer"
-                         title="Mis Proyectos"
+                         title="My Projects"
                      >
                          <Icons.Save size={16} />
-                         <span>Proyectos</span>
+                         <span>Projects</span>
                      </button>
 
                      {isMenuOpen && (
                          <div className="absolute top-14 left-0 w-60 bg-white rounded-xl shadow-xl border border-gray-200 p-2 flex flex-col gap-1 animate-in fade-in zoom-in-95 duration-200">
-                            <button onClick={() => saveProjectInternal()} className="flex items-center gap-3 p-2 rounded-lg hover:bg-blue-50 text-xs text-left font-bold text-moda-3 bg-blue-50/50"><Icons.Save size={14} /> Guardar Proyecto (Interno)</button>
-                            <button onClick={() => { setIsMenuOpen(false); setShowProjectsModal(true); showNotification("Galería de proyectos cargada"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Save size={14} /> Mis Proyectos (Galería)</button>
+                            <button onClick={() => saveProjectInternal()} className="flex items-center gap-3 p-2 rounded-lg hover:bg-blue-50 text-xs text-left font-bold text-moda-3 bg-blue-50/50"><Icons.Save size={14} /> Save Project (Internal)</button>
+                            <button onClick={() => { setIsMenuOpen(false); setShowProjectsModal(true); showNotification("Projects gallery opened"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Save size={14} /> My Projects (Gallery)</button>
                             <hr className="border-gray-100 my-1" />
-                            <button onClick={handleNewProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.File size={14} /> Nuevo Proyecto</button>
-                            <button onClick={handleSaveProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Exportar Proyecto (.drawonshape.json)</button>
-                            <button onClick={() => { projectLoadRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo de proyecto a abrir"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Abrir Proyecto (.drawonshape.json)</button>
-                            <button onClick={() => { projectImportRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo a insertar"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Add size={14} /> Insertar en Escena (.json)</button>
+                            <button onClick={handleNewProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.File size={14} /> New Project</button>
+                            <button onClick={handleSaveProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Export Project (.drawonshape.json)</button>
+                            <button onClick={() => { projectLoadRef.current?.click(); setIsMenuOpen(false); showNotification("Select project file to open"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Open Project (.drawonshape.json)</button>
+                            <button onClick={() => { projectImportRef.current?.click(); setIsMenuOpen(false); showNotification("Select file to insert"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Add size={14} /> Insert into Scene (.json)</button>
                             <hr className="border-gray-100 my-1" />
-                            <button onClick={() => { setIsMenuOpen(false); handleExportSnapshot(); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Exportar Imagen (PNG / JPG)</button>
-                            <button onClick={() => handleExport('stl')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Exportar STL (Mesh)</button>
-                            <button onClick={() => handleExport('glb')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Box size={14} /> Exportar GLB (Mesh)</button>
-                            <button onClick={() => handleExport('dxf')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left text-moda-3 font-bold bg-blue-50"><Icons.DrawOnShape size={14} /> Exportar DXF (Polilínea)</button>
+                            <button onClick={() => { setIsMenuOpen(false); handleExportSnapshot(); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Export Image (PNG / JPG)</button>
+                            <button onClick={() => handleExport('stl')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Export STL (Mesh)</button>
+                            <button onClick={() => handleExport('glb')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Box size={14} /> Export GLB (Mesh)</button>
+                            <button onClick={() => handleExport('dxf')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left text-moda-3 font-bold bg-blue-50"><Icons.DrawOnShape size={14} /> Export DXF (Polyline)</button>
                             <hr className="border-gray-100 my-1" />
-                            <button onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); showNotification(language === 'en' ? "Select 3D model (OBJ, STL, GLB, 3DM)" : "Selecciona archivo 3D (OBJ, STL, GLB, 3DM)"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> {language === 'en' ? 'Import 3D Model (OBJ, STL)' : 'Importar Modelo 3D (OBJ, STL)'}</button>
+                            <button onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); showNotification("Select 3D model (OBJ, STL, GLB, 3DM)"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Import 3D Model (OBJ, STL)</button>
                          </div>
                      )}
                      <div className="flex bg-white rounded-lg p-1 border border-gray-200 shadow-sm mt-2 w-fit">
-                        <button onClick={undo} disabled={historyIndex === 0} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded"><Icons.Undo size={16} /></button>
-                        <button onClick={redo} disabled={historyIndex === history.length - 1} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded"><Icons.Redo size={16} /></button>
+                        <button onClick={undo} disabled={historyIndex === 0} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded" title="Undo (Ctrl+Z)"><Icons.Undo size={16} /></button>
+                        <button onClick={redo} disabled={historyIndex === history.length - 1} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded" title="Redo (Ctrl+Y)"><Icons.Redo size={16} /></button>
                      </div>
                 </div>
             )}
@@ -1811,19 +1882,19 @@ export default function App() {
                  {showUI && (
                      <div className="bg-white/80 backdrop-blur rounded-full px-3 py-1.5 flex gap-2 border border-gray-200 shadow-sm items-center animate-in fade-in duration-200">
                         <div className="flex gap-1">
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('translate'); }} className={`p-1.5 rounded-full ${transformMode === 'translate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Mover"><Icons.Move size={17} /></button>
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('rotate'); }} className={`p-1.5 rounded-full ${transformMode === 'rotate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Rotar"><Icons.Rotate size={17} /></button>
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('scale'); }} className={`p-1.5 rounded-full ${transformMode === 'scale' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Escalar"><Icons.Scale size={17} /></button>
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('translate'); }} className={`p-1.5 rounded-full ${transformMode === 'translate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Move"><Icons.Move size={17} /></button>
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('rotate'); }} className={`p-1.5 rounded-full ${transformMode === 'rotate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Rotate"><Icons.Rotate size={17} /></button>
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('scale'); }} className={`p-1.5 rounded-full ${transformMode === 'scale' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Scale"><Icons.Scale size={17} /></button>
                         </div>
                         <div className="w-[1px] h-5 bg-gray-200" />
                         {/* Grid Visibility Toggle */}
                         <button 
                             onClick={() => {
                                 setIsGridVisible(!isGridVisible);
-                                showNotification(!isGridVisible ? "Rejilla activada" : "Rejilla oculta");
+                                showNotification(!isGridVisible ? "Grid enabled" : "Grid hidden");
                             }} 
                             className={`p-1.5 rounded-full transition-colors ${isGridVisible ? 'text-moda-3 font-bold bg-blue-50' : 'text-gray-400 hover:text-gray-600'}`}
-                            title={isGridVisible ? "Ocultar Rejilla" : "Mostrar Rejilla"}
+                            title={isGridVisible ? "Hide Grid" : "Show Grid"}
                         >
                             <Icons.Grid size={17} />
                         </button>
@@ -1833,19 +1904,19 @@ export default function App() {
                                 onClick={() => setIsBgMenuOpen(!isBgMenuOpen)} 
                                 className="w-6 h-6 rounded-full border border-gray-300 shadow-sm flex items-center justify-center p-0.5 hover:scale-105 transition-transform"
                                 style={{ backgroundColor: backgroundColor }}
-                                title="Color de Fondo"
+                                title="Background Color"
                             >
                                 <div className="w-full h-full rounded-full border border-black/10" />
                             </button>
                             {isBgMenuOpen && (
                                 <div className="absolute top-9 right-0 bg-white rounded-xl shadow-xl border border-gray-200 p-2.5 flex flex-col gap-2 z-50 min-w-[140px] animate-in fade-in zoom-in-95">
-                                    <div className="text-[10px] font-bold text-gray-500 uppercase px-1 tracking-wider">Fondo 3D</div>
+                                    <div className="text-[10px] font-bold text-gray-500 uppercase px-1 tracking-wider">3D Background</div>
                                     <div className="grid grid-cols-4 gap-1.5 px-1">
                                         {[
-                                            { color: '#ffffff', name: 'Blanco' },
-                                            { color: '#f1f5f9', name: 'Gris' },
-                                            { color: '#1e293b', name: 'Pizarra' },
-                                            { color: '#090d16', name: 'Negro' }
+                                            { color: '#ffffff', name: 'White' },
+                                            { color: '#f1f5f9', name: 'Gray' },
+                                            { color: '#1e293b', name: 'Slate' },
+                                            { color: '#090d16', name: 'Black' }
                                         ].map(bg => (
                                             <button
                                                 key={bg.color}
@@ -1871,7 +1942,7 @@ export default function App() {
                         </div>
                      </div>
                  )}
-                 <button onClick={() => setShowUI(!showUI)} className={`p-2.5 rounded-full border bg-white shadow-sm transition-colors ${!showUI ? 'bg-yellow-50 text-moda-4 border-yellow-200' : 'text-gray-400'}`} title={showUI ? "Ocultar interfaz" : "Mostrar interfaz"}><LayoutTemplate size={20} /></button>
+                 <button onClick={() => setShowUI(!showUI)} className={`p-2.5 rounded-full border bg-white shadow-sm transition-colors ${!showUI ? 'bg-yellow-50 text-moda-4 border-yellow-200' : 'text-gray-400'}`} title={showUI ? "Hide UI" : "Show UI"}><LayoutTemplate size={20} /></button>
             </div>
 
             {showUI && (
@@ -2053,13 +2124,13 @@ export default function App() {
                                  <ToolbarItem active={activeTool === 'eraser'} onClick={() => { handleToolChange('eraser'); setEraserMode('partial'); setLoftSelection([]); setInstruction(null); }} icon={Icons.Eraser} tooltipText="Eraser" onHover={setHoverInfo} onLeave={() => setHoverInfo(null)}>
                                      <div className="flex flex-col gap-2 p-1 min-w-[140px]">
                                          <div className="flex bg-gray-100 rounded-lg p-0.5">
-                                             <button onClick={() => setEraserMode('partial')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'partial' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Borrador Parcial"><Icons.Eraser size={16} /></button>
-                                             <button onClick={() => setEraserMode('object')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'object' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Borrar Objeto Completo"><Icons.Delete size={16} /></button>
+                                             <button onClick={() => setEraserMode('partial')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'partial' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Partial Eraser"><Icons.Eraser size={16} /></button>
+                                             <button onClick={() => setEraserMode('object')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'object' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Erase Entire Object"><Icons.Delete size={16} /></button>
                                          </div>
                                          {eraserMode === 'partial' && (
                                              <div className="flex flex-col gap-1 px-1">
                                                  <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
-                                                     <span>GROSOR</span>
+                                                     <span>THICKNESS</span>
                                                      <span className="text-gray-600 font-mono">{(eraserSize * 10).toFixed(1)}</span>
                                                  </div>
                                                  <input 
@@ -2189,9 +2260,25 @@ export default function App() {
                  </div>
             )}
 
-            {showUI && selectedIds.length === 1 && !showChat && selectedIds[0] !== 'symmetry-plane' && (
-                <div className="absolute right-4 bottom-32 w-64 bg-white/95 backdrop-blur border border-gray-200 rounded-2xl z-10 shadow-xl overflow-hidden">
-                    <PropertiesPanel object={sceneObjects.find(o => o.id === selectedIds[0]) || null} onChange={handleUpdateObject} onDelete={handleDeleteObject} onDuplicate={handleDuplicateObject} selectedCount={1} />
+            {showUI && selectedIds.length >= 1 && !showChat && !selectedIds.includes('symmetry-plane') && (
+                <div className="absolute right-4 bottom-32 w-64 bg-white/95 backdrop-blur border border-gray-200 rounded-2xl z-10 shadow-xl overflow-hidden animate-in fade-in slide-in-from-right-4 duration-200">
+                    <PropertiesPanel 
+                        object={selectedIds.length === 1 ? (sceneObjects.find(o => o.id === selectedIds[0]) || null) : null}
+                        selectedIds={selectedIds}
+                        allObjects={sceneObjects}
+                        onChange={handleUpdateObject} 
+                        onSelectedThicknessChange={handleSelectedStrokeThicknessChange}
+                        onSelectedOpacityChange={handleSelectedOpacityChange}
+                        onSelectedColorChange={handleColorChange}
+                        onSmoothSelected={handleSmoothSelected}
+                        onDelete={handleDeleteObject} 
+                        onDuplicate={handleDuplicateObject} 
+                        onGroup={handleGroup}
+                        onUngroup={handleUngroup}
+                        selectedCount={selectedIds.length}
+                        language={language}
+                        onActivatePipette={handleActivatePipette}
+                    />
                 </div>
             )}
             

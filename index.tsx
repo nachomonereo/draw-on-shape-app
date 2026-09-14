@@ -29,13 +29,13 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div style={{ padding: '40px', fontFamily: 'sans-serif', textAlign: 'center', backgroundColor: '#ffffff', height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', marginBottom: '12px' }}>Ocurrió un error al cargar la aplicación</h2>
-          <p style={{ fontSize: '14px', color: '#6b7280', maxWidth: '400px', marginBottom: '24px' }}>{this.state.error?.message || 'Error inesperado'}</p>
+          <h2 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', marginBottom: '12px' }}>An error occurred while running the application</h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', maxWidth: '400px', marginBottom: '24px' }}>{this.state.error?.message || 'Unexpected error'}</p>
           <button 
             onClick={() => { window.location.reload(); }}
             style={{ backgroundColor: '#5185A6', color: '#ffffff', padding: '12px 24px', borderRadius: '12px', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
           >
-            Reiniciar Aplicación
+            Restart Application
           </button>
         </div>
       );

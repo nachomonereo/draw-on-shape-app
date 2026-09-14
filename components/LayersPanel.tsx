@@ -29,7 +29,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     layers, objects, activeLayerId, areGeometryLayersVisible, onToggleGlobalGeometry,
     onLayerSelect, onToggleVisibility, onToggleLock, onAddLayer, onDeleteLayer, onRenameLayer, 
     onDeleteObject, onSelectObject, onToggleObjectVisibility, selectedIds = [],
-    onMoveObjectsToLayer, onCollapse, language = 'es'
+    onMoveObjectsToLayer, onCollapse, language = 'en'
 }) => {
     const isEn = language === 'en';
     // 2 Dedicated Tabs: 'geometry' and 'trace'
