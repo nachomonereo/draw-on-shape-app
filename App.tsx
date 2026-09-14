@@ -1984,7 +1984,7 @@ export default function App() {
                                      <div 
                                          className="w-3.5 h-3.5 rounded-full border border-gray-300 shadow-2xs" 
                                          style={{ 
-                                             backgroundColor: sceneObjects.find(o => selectedIds.includes(o.id))?.material.color || brushColor 
+                                             backgroundColor: sceneObjects.find(o => selectedIds.includes(o.id))?.material?.color || brushColor 
                                          }} 
                                      />
                                      <span>{language === 'en' ? 'Color' : 'Color'}</span>

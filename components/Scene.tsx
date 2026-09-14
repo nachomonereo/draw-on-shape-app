@@ -544,7 +544,10 @@ const ExtrusionComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isS
                  );
              })()}
              {isSelected && (
-                 <Outlines thickness={0.06} color="#FACC15" screenspace={false} opacity={1} transparent={false} angle={0} />
+                 <lineSegments>
+                     <edgesGeometry args={[geometry]} />
+                     <lineBasicMaterial color="#FACC15" linewidth={2} />
+                 </lineSegments>
              )}
         </mesh>
     );
@@ -641,7 +644,10 @@ const LoftComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; allObjec
              castShadow receiveShadow>
              <meshStandardMaterial color={data.material.color} roughness={0.5} metalness={0.1} transparent={!isSolid} opacity={data.material.opacity ?? 1} depthWrite={isSolid} side={THREE.DoubleSide} />
              {isSelected && (
-                 <Outlines thickness={0.06} color="#FACC15" screenspace={false} opacity={1} transparent={false} angle={0} />
+                 <lineSegments>
+                     <edgesGeometry args={[geometry]} />
+                     <lineBasicMaterial color="#FACC15" linewidth={2} />
+                 </lineSegments>
              )}
         </mesh>
     );
@@ -689,8 +695,13 @@ const StrokeComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSel
     const localRef = useRef<THREE.Group>(null);
     useImperativeHandle(ref, () => localRef.current!);
 
-    if (!data.strokeData || data.strokeData.points.length < 2) return null;
-    const points = useMemo(() => data.strokeData!.points.map(p => [p.x, p.y, p.z] as [number, number, number]), [data.strokeData]);
+    const points = useMemo(() => {
+        if (!data.strokeData?.points) return [];
+        return data.strokeData.points
+            .filter(p => p && typeof p.x === 'number' && !isNaN(p.x) && typeof p.y === 'number' && !isNaN(p.y) && typeof p.z === 'number' && !isNaN(p.z))
+            .map(p => [p.x, p.y, p.z] as [number, number, number]);
+    }, [data.strokeData]);
+    if (points.length < 2) return null;
     const isSolid = (data.material.opacity ?? 1) >= 0.99;
     
     return (
@@ -1116,8 +1127,14 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
                      />
                  );
              })()}
-            {isSelected && (
-                <Outlines thickness={0.05} color="yellow" screenspace={false} opacity={1} transparent={false} angle={0} />
+            {isSelected && type !== 'plane' && (
+                <Outlines thickness={0.05} color="#FACC15" screenspace={false} opacity={1} transparent={false} angle={0} />
+            )}
+            {isSelected && type === 'plane' && (
+                <lineSegments>
+                    <edgesGeometry args={[geometry]} />
+                    <lineBasicMaterial color="#FACC15" linewidth={2} />
+                </lineSegments>
             )}
         </mesh>
     );
@@ -1391,8 +1408,13 @@ const SceneContent = ({
     // Update target object for TransformControls (Single Selection)
     useEffect(() => {
         if (selectedIds.length === 1 && objectsGroupRef.current) {
-            const obj = objectsGroupRef.current.children.find(c => c.userData.id === selectedIds[0]);
-            setTargetObject(obj || null);
+            let found: THREE.Object3D | null = null;
+            objectsGroupRef.current.traverse(child => {
+                if (!found && child.userData?.id === selectedIds[0]) {
+                    found = child;
+                }
+            });
+            setTargetObject(found || null);
         } else {
             setTargetObject(null);
         }
@@ -2301,7 +2323,7 @@ const SceneContent = ({
             )}
 
             {/* TRANSFORM CONTROLS - ONLY VISIBLE IF SELECT TOOL IS ACTIVE */}
-            {targetObject && activeTool === 'select' && selectedObject && !lockedLayerIds.includes(selectedObject.layerId) && (
+            {targetObject && targetObject.parent && targetObject.userData?.id === selectedObject?.id && activeTool === 'select' && selectedObject && !lockedLayerIds.includes(selectedObject.layerId) && (
                 <group key={selectedObject.id}>
                     <TransformControls 
                         ref={transformControlsRef}
@@ -2317,6 +2339,7 @@ const SceneContent = ({
                             onTransformEnd();
                         }}
                         onChange={(e: any) => {
+                            if (!isTransformingRef.current) return;
                             if (e?.target?.object) {
                                 const o = e.target.object;
                                 let rotX = o.rotation.x;
@@ -2353,13 +2376,8 @@ const SceneContent = ({
             {/* MULTI-OBJECT TRANSFORM CONTROLS (GUMBALL) */}
             {selectedIds.length > 1 && activeTool === 'select' && multiCentroid && (
                 <group key="multi-transform-group">
-                    <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]} visible={false}>
-                        <boxGeometry args={[0.01, 0.01, 0.01]} />
-                        <meshBasicMaterial transparent opacity={0} />
-                    </mesh>
                     <TransformControls 
                         ref={multiTransformControlsRef}
-                        object={multiProxyMeshRef} 
                         mode={mode} 
                         onMouseDown={() => {
                             isTransformingRef.current = true;
@@ -2382,6 +2400,7 @@ const SceneContent = ({
                             onTransformEnd();
                         }}
                         onChange={() => {
+                            if (!isTransformingRef.current) return;
                             if (multiProxyMeshRef.current && onTransformMultiple) {
                                 if (!initialCentroidRef.current) {
                                     initialCentroidRef.current = multiProxyMeshRef.current.position.clone();
@@ -2414,7 +2433,12 @@ const SceneContent = ({
                             }
                         }}
                         size={0.8}
-                    />
+                    >
+                        <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]} visible={false}>
+                            <boxGeometry args={[0.01, 0.01, 0.01]} />
+                            <meshBasicMaterial transparent opacity={0} />
+                        </mesh>
+                    </TransformControls>
                 </group>
             )}
 
