@@ -1,12 +1,13 @@
 @echo off
-set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+set JAVA_HOME=C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot
+set PATH=%JAVA_HOME%\bin;%PATH%
 set ANDROID_HOME=C:\Users\nacho\AppData\Local\Android\Sdk
 set ANDROID_SDK_ROOT=C:\Users\nacho\AppData\Local\Android\Sdk
 
 echo Syncing web build to Capacitor Android...
 call npx cap copy android
 
-echo Building fresh APK using Android Studio JDK 21...
+echo Building fresh APK using Microsoft OpenJDK 21 LTS...
 cd android
 call gradlew.bat assembleDebug --rerun-tasks
 cd ..

@@ -20,35 +20,55 @@ import java.io.OutputStream;
 @CapacitorPlugin(name = "NativeFileSaver")
 public class NativeFileSaverPlugin extends Plugin {
 
-    private File pendingTempFile = null;
+    private static final String TEMP_FILE_NAME = "drawonshape_pending_export.tmp";
+
+    private File getTempFile() {
+        return new File(getContext().getCacheDir(), TEMP_FILE_NAME);
+    }
 
     @PluginMethod
-    public void saveFile(PluginCall call) {
-        String fileName = call.getString("fileName", "export");
-        String base64Data = call.getString("base64Data", "");
-        String mimeType = call.getString("mimeType", "*/*");
-
-        if (base64Data == null || base64Data.isEmpty()) {
-            call.reject("No data provided");
-            return;
-        }
+    public void appendChunk(PluginCall call) {
+        String chunk = call.getString("chunk", "");
+        Boolean isFirst = call.getBoolean("isFirst", false);
 
         try {
-            // Remove data URL header if present (e.g. data:image/png;base64,...)
-            if (base64Data.contains(",")) {
-                base64Data = base64Data.substring(base64Data.indexOf(",") + 1);
+            byte[] bytes;
+            try {
+                bytes = Base64.decode(chunk, Base64.DEFAULT);
+            } catch (Exception ex) {
+                bytes = Base64.decode(chunk, Base64.NO_PADDING | Base64.DEFAULT);
             }
 
-            byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
-            cleanUpTempFile();
+            File file = getTempFile();
+            if (Boolean.TRUE.equals(isFirst) && file.exists()) {
+                file.delete();
+            }
 
-            pendingTempFile = new File(getContext().getCacheDir(), "pending_export_" + System.currentTimeMillis());
-            try (FileOutputStream fos = new FileOutputStream(pendingTempFile)) {
+            try (FileOutputStream fos = new FileOutputStream(file, !Boolean.TRUE.equals(isFirst))) {
                 fos.write(bytes);
                 fos.flush();
             }
 
-            // Launch SAF ACTION_CREATE_DOCUMENT to let user select destination folder
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error appending chunk: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void startSaveDialog(PluginCall call) {
+        String fileName = call.getString("fileName", "export.png");
+        String mimeType = call.getString("mimeType", "*/*");
+
+        File file = getTempFile();
+        if (!file.exists() || file.length() == 0) {
+            call.reject("No data prepared for export");
+            return;
+        }
+
+        try {
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
 
@@ -62,32 +82,78 @@ public class NativeFileSaverPlugin extends Plugin {
             startActivityForResult(call, intent, "pickerCallback");
         } catch (Exception e) {
             cleanUpTempFile();
-            call.reject("Failed to initiate export: " + e.getMessage());
+            call.reject("Failed to open save dialog: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void saveFile(PluginCall call) {
+        String fileName = call.getString("fileName", "export.png");
+        String base64Data = call.getString("base64Data", "");
+        String mimeType = call.getString("mimeType", "*/*");
+
+        if (base64Data == null || base64Data.isEmpty()) {
+            call.reject("No data provided");
+            return;
+        }
+
+        try {
+            if (base64Data.contains(",")) {
+                base64Data = base64Data.substring(base64Data.indexOf(",") + 1);
+            }
+            byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+
+            File file = getTempFile();
+            if (file.exists()) file.delete();
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(bytes);
+                fos.flush();
+            }
+
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+            String normalizedMime = mimeType;
+            if (normalizedMime == null || normalizedMime.isEmpty() || normalizedMime.equals("application/octet-stream") || !normalizedMime.contains("/")) {
+                normalizedMime = "*/*";
+            }
+            intent.setType(normalizedMime);
+            intent.putExtra(Intent.EXTRA_TITLE, fileName);
+
+            startActivityForResult(call, intent, "pickerCallback");
+        } catch (Exception e) {
+            cleanUpTempFile();
+            call.reject("SaveFile error: " + e.getMessage());
         }
     }
 
     @ActivityCallback
-    private void pickerCallback(PluginCall call, ActivityResult result) {
-        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+    public void pickerCallback(PluginCall call, ActivityResult result) {
+        if (call == null) {
+            call = getSavedCall();
+        }
+
+        File file = getTempFile();
+
+        if (result != null && result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             Uri targetUri = result.getData().getData();
             if (targetUri == null) {
                 cleanUpTempFile();
-                call.reject("No destination selected");
+                if (call != null) call.reject("No destination selected");
                 return;
             }
 
-            if (pendingTempFile == null || !pendingTempFile.exists()) {
-                cleanUpTempFile();
-                call.reject("Temporary file missing");
+            if (!file.exists()) {
+                if (call != null) call.reject("Export data file was lost");
                 return;
             }
 
-            try (FileInputStream fis = new FileInputStream(pendingTempFile);
+            try (FileInputStream fis = new FileInputStream(file);
                  OutputStream os = getContext().getContentResolver().openOutputStream(targetUri)) {
 
                 if (os == null) {
                     cleanUpTempFile();
-                    call.reject("Cannot write to the selected destination");
+                    if (call != null) call.reject("Cannot write to selected location");
                     return;
                 }
 
@@ -102,27 +168,25 @@ public class NativeFileSaverPlugin extends Plugin {
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("uri", targetUri.toString());
-                call.resolve(ret);
+                if (call != null) call.resolve(ret);
             } catch (Exception e) {
                 cleanUpTempFile();
-                call.reject("Error writing file: " + e.getMessage());
+                if (call != null) call.reject("Error saving file to chosen location: " + e.getMessage());
             }
         } else {
-            // User cancelled the file picker dialog
+            // User cancelled or pressed back
             cleanUpTempFile();
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("cancelled", true);
-            call.resolve(ret);
+            if (call != null) call.resolve(ret);
         }
     }
 
     private void cleanUpTempFile() {
-        if (pendingTempFile != null && pendingTempFile.exists()) {
-            try {
-                pendingTempFile.delete();
-            } catch (Exception ignored) {}
-            pendingTempFile = null;
-        }
+        try {
+            File f = getTempFile();
+            if (f.exists()) f.delete();
+        } catch (Exception ignored) {}
     }
 }

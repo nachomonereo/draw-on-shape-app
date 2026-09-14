@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Icons } from './IconComponents';
 import { Layer, SceneObject } from '../types';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, FolderInput, Plus } from 'lucide-react';
 
 interface LayersPanelProps {
     layers: Layer[];
@@ -18,13 +18,18 @@ interface LayersPanelProps {
     onDeleteObject: (id: string) => void;
     onSelectObject: (id: string) => void;
     onToggleObjectVisibility: (id: string) => void;
-    selectedIds?: string[]; // New prop for multi-select styling
+    selectedIds?: string[];
+    onMoveObjectsToLayer?: (objectIds: string[], targetLayerId: string) => void;
 }
 
 const LayersPanel: React.FC<LayersPanelProps> = ({ 
     layers, objects, activeLayerId, areGeometryLayersVisible, onToggleGlobalGeometry,
-    onLayerSelect, onToggleVisibility, onToggleLock, onAddLayer, onDeleteLayer, onRenameLayer, onDeleteObject, onSelectObject, onToggleObjectVisibility, selectedIds = []
+    onLayerSelect, onToggleVisibility, onToggleLock, onAddLayer, onDeleteLayer, onRenameLayer, 
+    onDeleteObject, onSelectObject, onToggleObjectVisibility, selectedIds = [],
+    onMoveObjectsToLayer
 }) => {
+    // 2 Dedicated Tabs: 'geometry' and 'trace'
+    const [activeTab, setActiveTab] = useState<'geometry' | 'trace'>('geometry');
     const [expandedLayerIds, setExpandedLayerIds] = useState<string[]>([]);
     const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
     const [tempName, setTempName] = useState('');
@@ -54,146 +59,245 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         if (e.key === 'Escape') setEditingLayerId(null);
     };
 
+    // Filter layers strictly by active tab
+    const tabLayers = layers.filter(l => l.type === activeTab);
+    const geoCount = layers.filter(l => l.type === 'geometry').length;
+    const traceCount = layers.filter(l => l.type === 'trace').length;
+
     return (
-        <div className="flex flex-col h-full text-black font-sans bg-white">
-            <div className="p-4 border-b border-gray-100 bg-white">
-                <div className="flex justify-between items-center mb-2">
-                    <h3 className="font-bold text-xs uppercase tracking-wider text-gray-400">Layers</h3>
-                    <div className="flex gap-1">
-                        <button onClick={() => onAddLayer('geometry')} className="p-1 hover:bg-gray-100 rounded text-blue-500 transition-colors" title="Add Geometry Layer">
-                            <Icons.Box size={16} />
-                        </button>
-                         <button onClick={() => onAddLayer('trace')} className="p-1 hover:bg-gray-100 rounded text-yellow-500 transition-colors" title="Add Trace Layer">
-                            <Icons.Brush size={16} />
+        <div className="flex flex-col h-full text-black font-sans bg-white select-none">
+            {/* Top 2 Tabs Header */}
+            <div className="p-3 border-b border-gray-100 bg-white">
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl mb-3">
+                    <button
+                        onClick={() => setActiveTab('geometry')}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                            activeTab === 'geometry'
+                                ? 'bg-white text-blue-600 shadow-xs'
+                                : 'text-gray-500 hover:text-gray-800'
+                        }`}
+                    >
+                        <Icons.Box size={14} />
+                        <span>Geometría</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-500 font-mono">
+                            {geoCount}
+                        </span>
+                    </button>
+
+                    <button
+                        onClick={() => setActiveTab('trace')}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                            activeTab === 'trace'
+                                ? 'bg-white text-yellow-600 shadow-xs'
+                                : 'text-gray-500 hover:text-gray-800'
+                        }`}
+                    >
+                        <Icons.Brush size={14} />
+                        <span>Trazos</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-yellow-50 text-yellow-600 font-mono">
+                            {traceCount}
+                        </span>
+                    </button>
+                </div>
+
+                {/* Sub-toolbar per Tab */}
+                {activeTab === 'geometry' ? (
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                                Capas de Geometría
+                            </span>
+                            <button 
+                                onClick={() => onAddLayer('geometry')} 
+                                className="flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg text-xs font-bold transition-colors shadow-2xs"
+                                title="Añadir Capa de Geometría"
+                            >
+                                <Plus size={14} />
+                                <span>Nueva Capa</span>
+                            </button>
+                        </div>
+                        <button 
+                            onClick={onToggleGlobalGeometry}
+                            className={`w-full flex items-center justify-center gap-2 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all ${
+                                areGeometryLayersVisible 
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200 shadow-2xs' 
+                                    : 'bg-gray-100 text-gray-400 border-gray-200'
+                            }`}
+                        >
+                            {areGeometryLayersVisible ? <Icons.Eye size={13} /> : <Icons.EyeOff size={13} />}
+                            {areGeometryLayersVisible ? 'Geometría Visible' : 'Geometría Oculta'}
                         </button>
                     </div>
-                </div>
-                
-                <button 
-                    onClick={onToggleGlobalGeometry}
-                    className={`w-full flex items-center justify-center gap-2 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${areGeometryLayersVisible ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200'}`}
-                >
-                    {areGeometryLayersVisible ? <Icons.Eye size={12} /> : <Icons.EyeOff size={12} />}
-                    {areGeometryLayersVisible ? 'Geometry Visible' : 'Geometry Hidden'}
-                </button>
+                ) : (
+                    <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                            Capas de Trazo
+                        </span>
+                        <button 
+                            onClick={() => onAddLayer('trace')} 
+                            className="flex items-center gap-1 px-2.5 py-1 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 rounded-lg text-xs font-bold transition-colors shadow-2xs"
+                            title="Añadir Capa de Trazo"
+                        >
+                            <Plus size={14} />
+                            <span>Nueva Capa</span>
+                        </button>
+                    </div>
+                )}
             </div>
             
+            {/* Layers List */}
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                {layers.slice().reverse().map((layer) => {
-                    const layerObjects = objects.filter(o => o.layerId === layer.id);
-                    const isGeo = layer.type === 'geometry';
-                    const isExpanded = expandedLayerIds.includes(layer.id);
-                    const objectCount = layerObjects.length;
-                    
-                    return (
-                        <div key={layer.id} className="bg-white rounded-lg overflow-hidden border border-gray-100 shadow-sm">
-                            <div 
-                                onClick={() => onLayerSelect(layer.id)}
-                                className={`flex items-center gap-1 p-2 cursor-pointer transition-colors border-l-2 
-                                    ${activeLayerId === layer.id 
-                                        ? (isGeo ? 'bg-blue-50 border-blue-400' : 'bg-yellow-50 border-yellow-400') 
-                                        : 'hover:bg-gray-50 border-transparent'
-                                    }`}
-                            >
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); toggleExpand(layer.id); }}
-                                    className="p-0.5 text-gray-400 hover:text-black rounded"
+                {tabLayers.length === 0 ? (
+                    <div className="text-center py-10 text-gray-400 space-y-2">
+                        <p className="text-xs">No hay capas en esta pestaña</p>
+                        <button
+                            onClick={() => onAddLayer(activeTab)}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold"
+                        >
+                            + Crear primera capa
+                        </button>
+                    </div>
+                ) : (
+                    tabLayers.slice().reverse().map((layer) => {
+                        const layerObjects = objects.filter(o => o.layerId === layer.id);
+                        const isGeo = layer.type === 'geometry';
+                        const isExpanded = expandedLayerIds.includes(layer.id);
+                        const objectCount = layerObjects.length;
+                        const isLayerActive = activeLayerId === layer.id;
+                        
+                        return (
+                            <div key={layer.id} className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-2xs">
+                                <div 
+                                    onClick={() => onLayerSelect(layer.id)}
+                                    className={`flex items-center gap-1.5 p-2.5 cursor-pointer transition-colors border-l-3 
+                                        ${isLayerActive 
+                                            ? (isGeo ? 'bg-blue-50/70 border-blue-500' : 'bg-yellow-50/70 border-yellow-500') 
+                                            : 'hover:bg-gray-50 border-transparent'
+                                        }`}
                                 >
-                                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                </button>
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); toggleExpand(layer.id); }}
+                                        className="p-1 text-gray-400 hover:text-black rounded"
+                                    >
+                                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                    </button>
 
-                                <div className="flex items-center gap-0.5">
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); onToggleVisibility(layer.id); }}
-                                        className={`p-1 rounded ${layer.visible ? 'text-gray-400 hover:text-gray-600' : 'text-gray-300'}`}
-                                    >
-                                        {layer.visible ? <Icons.Eye size={14} /> : <Icons.EyeOff size={14} />}
-                                    </button>
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); onToggleLock(layer.id); }}
-                                        className={`p-1 rounded ${layer.locked ? 'text-red-400' : 'text-gray-300 hover:text-gray-500'}`}
-                                    >
-                                        {layer.locked ? <Icons.Lock size={14} /> : <Icons.Unlock size={14} />}
-                                    </button>
-                                </div>
-                                
-                                <div className="flex-1 flex items-center justify-between min-w-0 ml-1">
-                                    <div className="flex flex-col flex-1 mr-2">
-                                        {editingLayerId === layer.id ? (
-                                            <input 
-                                                type="text"
-                                                value={tempName}
-                                                onChange={(e) => setTempName(e.target.value)}
-                                                onBlur={saveName}
-                                                onKeyDown={handleKeyDown}
-                                                autoFocus
-                                                onClick={(e) => e.stopPropagation()}
-                                                className="text-xs font-bold text-gray-900 bg-white border border-blue-300 rounded px-1 py-0.5 focus:outline-none w-full"
-                                            />
-                                        ) : (
-                                            <span 
-                                                onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer); }}
-                                                className={`text-xs truncate leading-none select-none ${activeLayerId === layer.id ? 'font-bold text-gray-900' : 'text-gray-500'}`}
-                                                title="Double click to rename"
-                                            >
-                                                {layer.name}
-                                            </span>
-                                        )}
-                                        <span className="text-[9px] text-gray-300 font-mono mt-0.5">
-                                            {objectCount} objects
-                                        </span>
+                                    <div className="flex items-center gap-0.5">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onToggleVisibility(layer.id); }}
+                                            className={`p-1 rounded ${layer.visible ? 'text-gray-500 hover:text-gray-800' : 'text-gray-300'}`}
+                                            title={layer.visible ? "Ocultar capa" : "Mostrar capa"}
+                                        >
+                                            {layer.visible ? <Icons.Eye size={14} /> : <Icons.EyeOff size={14} />}
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onToggleLock(layer.id); }}
+                                            className={`p-1 rounded ${layer.locked ? 'text-red-500' : 'text-gray-300 hover:text-gray-600'}`}
+                                            title={layer.locked ? "Desbloquear capa" : "Bloquear capa"}
+                                        >
+                                            {layer.locked ? <Icons.Lock size={14} /> : <Icons.Unlock size={14} />}
+                                        </button>
                                     </div>
-                                    <span className={`text-[8px] px-1 py-0.5 rounded uppercase tracking-wider font-bold ml-1 ${isGeo ? 'bg-blue-100 text-blue-600' : 'bg-yellow-100 text-yellow-600'}`}>
-                                        {isGeo ? 'GEO' : 'TRACE'}
-                                    </span>
+                                    
+                                    <div className="flex-1 flex items-center justify-between min-w-0 ml-1">
+                                        <div className="flex flex-col flex-1 mr-2">
+                                            {editingLayerId === layer.id ? (
+                                                <input 
+                                                    type="text"
+                                                    value={tempName}
+                                                    onChange={(e) => setTempName(e.target.value)}
+                                                    onBlur={saveName}
+                                                    onKeyDown={handleKeyDown}
+                                                    autoFocus
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="text-xs font-bold text-gray-900 bg-white border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none w-full"
+                                                />
+                                            ) : (
+                                                <span 
+                                                    onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer); }}
+                                                    className={`text-xs truncate select-none ${isLayerActive ? 'font-bold text-gray-900' : 'text-gray-600'}`}
+                                                    title="Doble clic para renombrar"
+                                                >
+                                                    {layer.name}
+                                                </span>
+                                            )}
+                                            <span className="text-[10px] text-gray-400 font-mono mt-0.5">
+                                                {objectCount} {objectCount === 1 ? 'objeto' : 'objetos'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Action: Move Selected Elements to this Layer */}
+                                    {selectedIds.length > 0 && onMoveObjectsToLayer && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onMoveObjectsToLayer(selectedIds, layer.id);
+                                            }}
+                                            className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors border border-indigo-200/60 shadow-2xs"
+                                            title={`Mover los ${selectedIds.length} elementos seleccionados a esta capa`}
+                                        >
+                                            <FolderInput size={12} />
+                                            <span>Mover aquí</span>
+                                        </button>
+                                    )}
+
+                                    {layers.length > 1 && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onDeleteLayer(layer.id); }}
+                                            className="p-1.5 text-gray-300 hover:text-red-500 transition-colors ml-1 rounded"
+                                            title="Eliminar capa"
+                                        >
+                                            <Icons.Delete size={14} />
+                                        </button>
+                                    )}
                                 </div>
 
-                                {layers.length > 1 && (
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); onDeleteLayer(layer.id); }}
-                                        className="p-1 text-gray-300 hover:text-red-400 transition-colors ml-1"
-                                    >
-                                        <Icons.Delete size={14} />
-                                    </button>
+                                {/* Expanded Objects List */}
+                                {isExpanded && layerObjects.length > 0 && (
+                                    <div className="border-t border-gray-100 bg-gray-50/60">
+                                        {layerObjects.map(obj => {
+                                            const isObjSelected = selectedIds.includes(obj.id);
+                                            return (
+                                                <div 
+                                                    key={obj.id} 
+                                                    onClick={() => onSelectObject(obj.id)}
+                                                    className={`flex items-center gap-2 py-1.5 px-3 pl-7 text-[11px] group transition-colors border-b border-gray-100/60 last:border-0 ${
+                                                        isObjSelected ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-white text-gray-600'
+                                                    }`}
+                                                >
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); onToggleObjectVisibility(obj.id); }}
+                                                        className={`p-0.5 rounded ${obj.visible !== false ? 'text-gray-400 hover:text-gray-700' : 'text-gray-300'}`}
+                                                    >
+                                                        {obj.visible !== false ? <Icons.Eye size={11} /> : <Icons.EyeOff size={11} />}
+                                                    </button>
+
+                                                    <div 
+                                                        className="w-2.5 h-2.5 rounded-full border border-black/10 shadow-2xs shrink-0" 
+                                                        style={{ backgroundColor: obj.material?.color || '#000' }}
+                                                    />
+
+                                                    <span className={`flex-1 truncate ${obj.visible === false ? 'text-gray-400 italic' : ''}`}>
+                                                        {obj.parentId ? '↳ ' : ''}{obj.name}
+                                                    </span>
+                                                    
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); onDeleteObject(obj.id); }}
+                                                        className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all p-1"
+                                                        title="Eliminar elemento"
+                                                    >
+                                                        <Icons.Close size={12} />
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 )}
                             </div>
-
-                            {isExpanded && layerObjects.length > 0 && (
-                                <div className="border-t border-gray-50 bg-gray-50/50">
-                                    {layerObjects.map(obj => {
-                                        const isObjSelected = selectedIds.includes(obj.id);
-                                        return (
-                                            <div 
-                                                key={obj.id} 
-                                                onClick={() => onSelectObject(obj.id)}
-                                                className={`flex items-center gap-2 py-1.5 px-2 pl-8 text-[10px] group transition-colors border-b border-gray-50 last:border-0 ${isObjSelected ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-white text-gray-500'}`}
-                                            >
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); onToggleObjectVisibility(obj.id); }}
-                                                    className={`p-0.5 rounded ${obj.visible !== false ? 'text-gray-400 hover:text-gray-600' : 'text-gray-300'}`}
-                                                >
-                                                    {obj.visible !== false ? <Icons.Eye size={10} /> : <Icons.EyeOff size={10} />}
-                                                </button>
-
-                                                <div className="w-2 h-2 rounded-full border border-black/10 shadow-sm" style={{ backgroundColor: obj.material.color }}></div>
-                                                <span className={`flex-1 truncate ${obj.visible === false ? 'text-gray-300 italic' : ''}`}>
-                                                    {obj.parentId ? '↳ ' : ''}{obj.name}
-                                                </span>
-                                                
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); onDeleteObject(obj.id); }}
-                                                    className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all"
-                                                >
-                                                    <Icons.Close size={12} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
+                        );
+                    })
+                )}
             </div>
         </div>
     );

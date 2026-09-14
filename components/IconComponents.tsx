@@ -1,24 +1,59 @@
 import React from 'react';
-import { Box, Circle, Cylinder, Cone, Triangle, Square, MousePointer2, Move, Rotate3D, Scale, Sparkles, MessageSquare, Plus, Trash2, Download, Menu, X, Undo, Redo, Layers, Brush, Palette, View, Grid3X3, Eye, EyeOff, Lock, Unlock, GitGraph, File, Upload, Spline, Maximize, SplitSquareHorizontal, Image as ImageIcon, PenTool, FoldVertical, Route, Waves, Group, Ungroup, Minus, Shapes, LassoSelect, Move3d, Droplets, Eraser, PaintBucket, Save, RotateCcw, Pentagon, Info } from 'lucide-react';
+import { 
+    Box, Circle, Cylinder, Cone, Triangle, Square, MousePointer2, Move, Rotate3D, 
+    Scaling, Sparkles, MessageSquare, Plus, Trash2, Download, Menu, X, Undo, Redo, 
+    Layers, Brush, Palette, View, Grid3X3, Eye, EyeOff, Lock, Unlock, GitGraph, 
+    File, Upload, Spline, Maximize, SplitSquareHorizontal, Image as ImageIcon, 
+    PenTool, FoldVertical, Waves, Group, Ungroup, Minus, Shapes, LassoSelect, 
+    Move3d, Droplets, Eraser, PaintBucket, Save, RotateCcw, Pentagon, Info,
+    FolderInput, Library, Package, ArrowDownToLine
+} from 'lucide-react';
+
+// Dedicated CAD Loft SVG icon representing surface bridging between two 3D profiles
+const LoftIcon: React.FC<{ size?: number; className?: string }> = ({ size = 20, className }) => (
+    <svg 
+        width={size} 
+        height={size} 
+        viewBox="0 0 24 24" 
+        fill="none" 
+        stroke="currentColor" 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        className={className}
+    >
+        {/* Top cross-section profile */}
+        <path d="M4 6c4-3 12-3 16 0" />
+        {/* Bottom cross-section profile */}
+        <path d="M6 18c3-2 9-2 12 0" />
+        {/* Left ruled surface boundary */}
+        <path d="M4 6c1 5 1 9 2 12" />
+        {/* Right ruled surface boundary */}
+        <path d="M20 6c-1 5-1 9-2 12" />
+        {/* Center surface flow ruling */}
+        <path d="M12 4.5v12" strokeDasharray="2 2" />
+    </svg>
+);
 
 export const Icons = {
     Box, Circle, Cylinder, Cone, Triangle, Square, Plane: Square, File,
     Select: MousePointer2,
-    Move, Rotate: Rotate3D, Scale,
+    Move, Rotate: Rotate3D, 
+    Scale: Scaling, // 3D Expansion / Scaling icon instead of balance scale
     AI: Sparkles, Chat: MessageSquare,
-    Add: Plus, Plus, 
-    Minus, // Added for subtract selection
+    Add: Plus,
+    Minus,
     Delete: Trash2, Export: Download,
     Menu, Close: X, Undo, Redo, Layers,
     Brush, Palette, View, Grid: Grid3X3,
     Eye, EyeOff, Lock, Unlock, 
-    Loft: Route, 
+    Loft: LoftIcon, // CAD Loft icon
     Upload,
     Spline,
     Save,
     CurvedPlane: Waves, 
     FitView: Maximize,
-    Reset: RotateCcw, // New Reset Icon
+    Reset: RotateCcw,
     Symmetry: SplitSquareHorizontal,
     Image: ImageIcon,
     DrawOnShape: PenTool,
@@ -29,6 +64,10 @@ export const Icons = {
     Blob: Droplets,
     Eraser,
     Fill: PaintBucket,
-    FillShape: Pentagon, // New Fill Icon
-    Info
+    FillShape: Pentagon,
+    Info,
+    FolderInput,
+    Library,
+    Package,
+    ArrowDownToLine
 };

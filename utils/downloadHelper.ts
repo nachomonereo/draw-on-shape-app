@@ -3,11 +3,9 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
 interface NativeFileSaverPlugin {
-    saveFile(options: {
-        fileName: string;
-        base64Data: string;
-        mimeType: string;
-    }): Promise<{ success: boolean; uri?: string; cancelled?: boolean }>;
+    appendChunk(options: { chunk: string; isFirst: boolean }): Promise<{ success: boolean }>;
+    startSaveDialog(options: { fileName: string; mimeType: string }): Promise<{ success: boolean; uri?: string; cancelled?: boolean }>;
+    saveFile(options: { fileName: string; base64Data: string; mimeType: string }): Promise<{ success: boolean; uri?: string; cancelled?: boolean }>;
 }
 
 const NativeFileSaver = registerPlugin<NativeFileSaverPlugin>('NativeFileSaver');
@@ -26,12 +24,19 @@ export async function saveOrShareFile(
             } else {
                 base64Data = await blobToBase64(blobOrDataUrl);
             }
+            base64Data = base64Data.trim().replace(/\s+/g, '');
 
-            // PRIMARY: Android Storage Access Framework (SAF) folder picker ("Guardar en...")
+            // PRIMARY: Android Storage Access Framework (SAF) folder picker with safe chunking
+            // Chunk size: 256KB to avoid Android Binder TransactionTooLargeException
             try {
-                const res = await NativeFileSaver.saveFile({
+                const CHUNK_SIZE = 256 * 1024;
+                for (let i = 0; i < base64Data.length; i += CHUNK_SIZE) {
+                    const chunk = base64Data.slice(i, i + CHUNK_SIZE);
+                    await NativeFileSaver.appendChunk({ chunk, isFirst: i === 0 });
+                }
+
+                const res = await NativeFileSaver.startSaveDialog({
                     fileName: filename,
-                    base64Data,
                     mimeType
                 });
 
@@ -43,7 +48,7 @@ export async function saveOrShareFile(
                     return { success: true, path: res.uri };
                 }
             } catch (pluginErr) {
-                console.warn("NativeFileSaver failed, falling back to Share sheet:", pluginErr);
+                console.warn("NativeFileSaver chunked save failed, falling back to Share sheet:", pluginErr);
             }
 
             // FALLBACK 1: Save to Cache directory and open Share sheet with file attachment
@@ -64,9 +69,11 @@ export async function saveOrShareFile(
                 return { success: true, path: savedFile.uri };
             } catch (shareErr) {
                 console.warn("Share sheet fallback failed:", shareErr);
+                throw new Error("No se pudo guardar ni compartir el archivo en este dispositivo: " + (shareErr as Error).message);
             }
         } catch (e) {
             console.error("Capacitor save/share error:", e);
+            throw e;
         }
     }
 
@@ -85,8 +92,7 @@ export async function saveOrShareFile(
             });
             const writableStream = await fileHandle.createWritable();
             if (typeof blobOrDataUrl === 'string') {
-                const response = await fetch(blobOrDataUrl);
-                const blob = await response.blob();
+                const blob = dataUrlToBlob(blobOrDataUrl);
                 await writableStream.write(blob);
             } else {
                 await writableStream.write(blobOrDataUrl);
@@ -103,14 +109,8 @@ export async function saveOrShareFile(
     }
 
     // 3. Fallback standard browser download link
-    let url: string;
-    let createdUrl = false;
-    if (typeof blobOrDataUrl === 'string') {
-        url = blobOrDataUrl;
-    } else {
-        url = URL.createObjectURL(blobOrDataUrl);
-        createdUrl = true;
-    }
+    const blob = typeof blobOrDataUrl === 'string' ? dataUrlToBlob(blobOrDataUrl) : blobOrDataUrl;
+    const url = URL.createObjectURL(blob);
 
     const a = document.createElement('a');
     a.style.display = 'none';
@@ -121,10 +121,26 @@ export async function saveOrShareFile(
 
     setTimeout(() => {
         document.body.removeChild(a);
-        if (createdUrl) URL.revokeObjectURL(url);
-    }, 1500);
+        URL.revokeObjectURL(url);
+    }, 2000);
 
     return { success: true };
+}
+
+function dataUrlToBlob(dataUrlOrBase64: string): Blob {
+    if (!dataUrlOrBase64.startsWith('data:')) {
+        const u8arr = Uint8Array.from(atob(dataUrlOrBase64), c => c.charCodeAt(0));
+        return new Blob([u8arr]);
+    }
+    const arr = dataUrlOrBase64.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'application/octet-stream';
+    const bstr = atob(arr[1] || arr[0]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -132,7 +148,7 @@ function blobToBase64(blob: Blob): Promise<string> {
         const reader = new FileReader();
         reader.onloadend = () => {
             const res = reader.result as string;
-            const base64 = res.includes(',') ? res.split(',')[1] : res;
+            const base64 = res.includes(',') ? res.split(',')[1] : base64;
             resolve(base64);
         };
         reader.onerror = reject;

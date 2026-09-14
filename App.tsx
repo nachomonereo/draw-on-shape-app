@@ -6,7 +6,7 @@ import ChatPanel from './components/ChatPanel';
 import PropertiesPanel from './components/PropertiesPanel';
 import LayersPanel from './components/LayersPanel';
 import RadialPalette from './components/RadialPalette';
-import { SceneObject, ShapeType, ChatMessage, Vector3, Layer, UserProfile, Project, CameraView } from './types';
+import { SceneObject, ShapeType, ChatMessage, Vector3, Layer, UserProfile, Project, CameraView, SceneComponent } from './types';
 import { generate3DContent } from './services/geminiService';
 import { generateBlobGeometry } from './services/blobService';
 import { ProjectsPanel } from './components/ProjectsPanel';
@@ -230,6 +230,212 @@ export default function App() {
 
     // Helper to ensure Ref and State stay in sync
     const updateSceneState = (newObjects: SceneObject[]) => {
+        sceneObjectsRef.current = newObjects;
+        setSceneObjects(newObjects);
+    };
+
+    // Component Library State
+    const [customComponents, setCustomComponents] = useState<SceneComponent[]>(() => {
+        try {
+            const saved = localStorage.getItem('draw_on_shape_components_v1');
+            return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const saveComponentsToStorage = (list: SceneComponent[]) => {
+        try {
+            localStorage.setItem('draw_on_shape_components_v1', JSON.stringify(list));
+            setCustomComponents(list);
+        } catch (e) {
+            console.error("Failed to save components to localStorage", e);
+        }
+    };
+
+    const handleSaveSelectionAsComponent = () => {
+        if (selectedIds.length === 0) {
+            showNotification(language === 'en' ? "Select an object or group first" : "Selecciona un objeto o grupo primero");
+            return;
+        }
+
+        const currentObjs = sceneObjectsRef.current;
+        const allTargetIds = new Set<string>();
+        const collectIds = (id: string) => {
+            allTargetIds.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+        };
+        selectedIds.forEach(id => collectIds(id));
+
+        const componentObjs = currentObjs.filter(o => allTargetIds.has(o.id));
+        if (componentObjs.length === 0) return;
+
+        const defaultName = componentObjs.find(o => o.type === 'group')?.name || `Componente ${customComponents.length + 1}`;
+        const inputName = window.prompt(
+            language === 'en' ? "Enter component name:" : "Introduce el nombre del componente:",
+            defaultName
+        );
+        if (!inputName || !inputName.trim()) return;
+
+        const newComp: SceneComponent = {
+            id: generateId(),
+            name: inputName.trim(),
+            createdAt: Date.now(),
+            objects: componentObjs
+        };
+
+        const updated = [newComp, ...customComponents];
+        saveComponentsToStorage(updated);
+        showNotification(language === 'en' ? `Component '${newComp.name}' saved to library!` : `¡Componente '${newComp.name}' guardado en la biblioteca!`);
+    };
+
+    const handleInsertComponent = (comp: SceneComponent) => {
+        if (!comp.objects || comp.objects.length === 0) return;
+
+        const idMap = new Map<string, string>();
+        comp.objects.forEach(o => idMap.set(o.id, generateId()));
+        const targetLayerId = ensureActiveLayerType('geometry');
+
+        const clonedObjs: SceneObject[] = comp.objects.map(obj => {
+            const newId = idMap.get(obj.id) || generateId();
+            const newParentId = obj.parentId ? idMap.get(obj.parentId) : undefined;
+            return {
+                ...obj,
+                id: newId,
+                parentId: newParentId,
+                layerId: targetLayerId,
+                position: {
+                    x: obj.position.x + (Math.random() * 0.4 - 0.2),
+                    y: obj.position.y,
+                    z: obj.position.z + (Math.random() * 0.4 - 0.2)
+                }
+            };
+        });
+
+        const newAllObjects = [...sceneObjectsRef.current, ...clonedObjs];
+        updateSceneState(newAllObjects);
+        addToHistory(newAllObjects);
+
+        const rootNewIds = clonedObjs.filter(o => !o.parentId).map(o => o.id);
+        setSelectedIds(rootNewIds);
+        handleToolChange('select');
+
+        showNotification(language === 'en' ? `Component '${comp.name}' inserted!` : `¡Componente '${comp.name}' insertado!`);
+    };
+
+    const handleDeleteComponent = (id: string) => {
+        const updated = customComponents.filter(c => c.id !== id);
+        saveComponentsToStorage(updated);
+        showNotification(language === 'en' ? "Component removed" : "Componente eliminado");
+    };
+
+    const handleExportComponent = async (comp: SceneComponent) => {
+        try {
+            const jsonStr = JSON.stringify(comp, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const sanitizedName = comp.name.replace(/[^a-zA-Z0-9_\-]/g, '_');
+            const res = await saveOrShareFile(blob, `${sanitizedName}_component.json`, 'application/json');
+            if (res.success) {
+                showNotification(language === 'en' ? `Exported ${sanitizedName}` : `Componente exportado correctamente`);
+            }
+        } catch (e: any) {
+            console.error("Export component error:", e);
+            showNotification(language === 'en' ? "Failed to export component" : "Error al exportar componente");
+        }
+    };
+
+    const handleImportComponent = (file: File) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result as string;
+                const parsed = JSON.parse(text);
+                if (parsed && parsed.objects && Array.isArray(parsed.objects)) {
+                    const importedComp: SceneComponent = {
+                        id: generateId(),
+                        name: parsed.name || file.name.replace(/\.json$/i, ''),
+                        createdAt: Date.now(),
+                        objects: parsed.objects
+                    };
+                    const updated = [importedComp, ...customComponents];
+                    saveComponentsToStorage(updated);
+                    showNotification(language === 'en' ? `Component '${importedComp.name}' imported!` : `¡Componente '${importedComp.name}' importado!`);
+                } else {
+                    alert(language === 'en' ? "Invalid component JSON file" : "Archivo JSON de componente no válido");
+                }
+            } catch (err) {
+                console.error("Failed to parse component JSON", err);
+                alert(language === 'en' ? "Could not read component file" : "No se pudo leer el archivo de componente");
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const handleMoveObjectsToLayer = (objectIds: string[], targetLayerId: string) => {
+        const targetLayer = layers.find(l => l.id === targetLayerId);
+        if (!targetLayer) return;
+
+        const currentObjs = sceneObjectsRef.current;
+        const allTargetIds = new Set<string>();
+        const collectIds = (id: string) => {
+            allTargetIds.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+        };
+        objectIds.forEach(id => collectIds(id));
+
+        const updated = currentObjs.map(obj => {
+            if (allTargetIds.has(obj.id)) {
+                return { ...obj, layerId: targetLayerId };
+            }
+            return obj;
+        });
+
+        updateSceneState(updated);
+        addToHistory(updated);
+        showNotification(language === 'en' 
+            ? `${objectIds.length} element(s) moved to "${targetLayer.name}"` 
+            : `${objectIds.length} elemento(s) movidos a "${targetLayer.name}"`);
+    };
+
+    const handleColorChange = (newColor: string) => {
+        setBrushColor(newColor);
+        if (selectedIds.length > 0) {
+            const currentObjs = sceneObjectsRef.current;
+            const allTargetIds = new Set<string>();
+            const collectIds = (id: string) => {
+                allTargetIds.add(id);
+                currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+            };
+            selectedIds.forEach(id => collectIds(id));
+
+            const updated = currentObjs.map(obj => {
+                if (allTargetIds.has(obj.id)) {
+                    return {
+                        ...obj,
+                        material: {
+                            ...obj.material,
+                            color: newColor
+                        }
+                    };
+                }
+                return obj;
+            });
+
+            updateSceneState(updated);
+            addToHistory(updated);
+        }
+    };
+
+    const handleTransformMultiple = (updatesList: { id: string; updates: Partial<SceneObject> }[]) => {
+        const sourceObjects = sceneObjectsRef.current;
+        const updateMap = new Map(updatesList.map(u => [u.id, u.updates]));
+        const newObjects = sourceObjects.map(obj => {
+            const u = updateMap.get(obj.id);
+            if (u) {
+                return { ...obj, ...u };
+            }
+            return obj;
+        });
         sceneObjectsRef.current = newObjects;
         setSceneObjects(newObjects);
     };
@@ -1338,6 +1544,7 @@ export default function App() {
                             onSelectObject={id => { setSelectedIds([id]); handleToolChange('select'); }} 
                             onToggleObjectVisibility={id => setSceneObjects(sceneObjects.map(o => o.id === id ? {...o, visible: o.visible===false} : o))} 
                             selectedIds={selectedIds} 
+                            onMoveObjectsToLayer={handleMoveObjectsToLayer}
                         />
                     </div>
                 </div>
@@ -1354,6 +1561,7 @@ export default function App() {
                             handleUpdateObject(id, u, false);
                         } 
                     }} 
+                    onTransformMultiple={handleTransformMultiple}
                     onTransformStart={()=>{}} 
                     onTransformEnd={() => { 
                         if (!selectedIds.includes('symmetry-plane')) {
@@ -1372,15 +1580,15 @@ export default function App() {
                 />
             </div>
 
-            {showUI && (activeTool === 'brush' || activeTool === 'draw-plane' || activeTool === 'eraser') && (
+            {showUI && (activeTool === 'brush' || activeTool === 'draw-plane' || activeTool === 'eraser' || selectedIds.length > 0) && (
                  <div className="absolute bottom-20 left-20 z-50 animate-in fade-in duration-200">
                     <RadialPalette 
                         color={brushColor} 
                         thickness={brushSize} 
-                        smoothing={brushSmoothing} // Pass state
-                        onColorChange={setBrushColor} 
+                        smoothing={brushSmoothing}
+                        onColorChange={handleColorChange} 
                         onThicknessChange={setBrushSize} 
-                        onSmoothingChange={setBrushSmoothing} // Pass callback
+                        onSmoothingChange={setBrushSmoothing}
                     />
                 </div>
             )}
@@ -1388,14 +1596,22 @@ export default function App() {
             {showUI && (
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 pointer-events-none animate-in fade-in duration-200">
                     <div className="pointer-events-auto flex flex-col items-center gap-4">
-                        {selectedIds.length > 0 && (selectedIds.length > 1 || selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'group')) && (
-                            <div className="flex gap-2 animate-in slide-in-from-bottom-2 bg-white/90 p-1.5 rounded-full shadow-xl border border-gray-100">
+                        {selectedIds.length > 0 && (
+                            <div className="flex items-center gap-2 animate-in slide-in-from-bottom-2 bg-white/95 backdrop-blur p-1.5 rounded-full shadow-xl border border-gray-200">
                                  {selectedIds.length > 1 && (
-                                     <button onClick={handleGroup} className="px-4 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700"><Icons.Group size={14} /> Agrupar</button>
+                                     <button onClick={handleGroup} className="px-3.5 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700"><Icons.Group size={14} /> Agrupar</button>
                                  )}
                                  {selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'group') && (
-                                     <button onClick={handleUngroup} className="px-4 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1"><Icons.Group size={14} /> Desagrupar</button>
+                                     <button onClick={handleUngroup} className="px-3.5 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1"><Icons.Group size={14} /> Desagrupar</button>
                                  )}
+                                 <button 
+                                     onClick={handleSaveSelectionAsComponent} 
+                                     className="px-3.5 py-1.5 rounded-full hover:bg-indigo-50 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                                     title="Guardar como componente reusable en la biblioteca"
+                                 >
+                                     <Icons.Package size={14} /> 
+                                     <span>Guardar Componente</span>
+                                 </button>
                             </div>
                         )}
 
@@ -1527,31 +1743,32 @@ export default function App() {
                                     isSeparate={true}
                                     onHover={setHoverInfo} onLeave={() => setHoverInfo(null)}
                                  >
-                                    <div className="flex gap-1">
-                                        <button onClick={() => { handleAddObject('box'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Cubo"><Icons.Box size={18} /></button>
-                                        <button onClick={() => { handleAddObject('sphere'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Esfera"><Icons.Circle size={18} /></button>
-                                        <button onClick={() => { handleAddObject('plane'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Plano (Cuadrado)"><Icons.Square size={18} /></button>
-                                        <button 
-                                            onClick={() => { handleToolChange('draw-plane'); setInstruction("Dibujar curva para Plano (Curve Guide)"); }} 
-                                            className={`p-2 rounded-lg ${activeTool === 'draw-plane' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
-                                            title="Plano (Curve Guide)"
-                                        >
-                                            <Icons.Spline size={18} />
-                                        </button>
-                                        <button 
-                                            onClick={startLoftTool} 
-                                            className={`p-2 rounded-lg ${activeTool === 'loft-step-1' || activeTool === 'loft-step-2' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
-                                            title="Loft"
-                                        >
-                                            <Icons.Loft size={18} />
-                                        </button>
-                                    </div>
-                                </ToolbarItem>
-                             </div>
-                        </div>
+                                     <div className="flex gap-1">
+                                         <button onClick={() => { handleAddObject('box'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Cubo"><Icons.Box size={18} /></button>
+                                         <button onClick={() => { handleAddObject('cylinder'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Cilindro"><Icons.Cylinder size={18} /></button>
+                                         <button onClick={() => { handleAddObject('sphere'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Esfera"><Icons.Circle size={18} /></button>
+                                         <button onClick={() => { handleAddObject('plane'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Plano (Cuadrado)"><Icons.Square size={18} /></button>
+                                         <button 
+                                             onClick={() => { handleToolChange('draw-plane'); setInstruction("Dibujar curva para Plano (Curve Guide)"); }} 
+                                             className={`p-2 rounded-lg ${activeTool === 'draw-plane' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
+                                             title="Plano (Curve Guide)"
+                                         >
+                                             <Icons.Spline size={18} />
+                                         </button>
+                                         <button 
+                                             onClick={startLoftTool} 
+                                             className={`p-2 rounded-lg ${activeTool === 'loft-step-1' || activeTool === 'loft-step-2' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
+                                             title="Loft"
+                                         >
+                                             <Icons.Loft size={18} />
+                                         </button>
+                                     </div>
+                                 </ToolbarItem>
+                              </div>
+                         </div>
 
-                    </div>
-                </div>
+                     </div>
+                 </div>
             )}
 
             {showUI && selectedIds.length === 1 && !showChat && selectedIds[0] !== 'symmetry-plane' && (
@@ -1560,7 +1777,7 @@ export default function App() {
                 </div>
             )}
             
-            {/* PROJECTS MANAGEMENT MODAL */}
+            {/* PROJECTS & COMPONENT LIBRARY MODAL */}
             <ProjectsPanel 
                 isOpen={showProjectsModal}
                 onClose={() => setShowProjectsModal(false)}
@@ -1569,6 +1786,13 @@ export default function App() {
                 language={language}
                 onLanguageChange={handleLanguageChange}
                 onCaptureThumbnail={() => exportRef.current?.getScreenshot('image/png') || ''}
+                components={customComponents}
+                onInsertComponent={handleInsertComponent}
+                onDeleteComponent={handleDeleteComponent}
+                onExportComponent={handleExportComponent}
+                onImportComponent={handleImportComponent}
+                onSaveSelectionAsComponent={handleSaveSelectionAsComponent}
+                selectedCount={selectedIds.length}
                 onLoadProject={(proj) => {
                     updateSceneState(proj.sceneObjects);
                     setLayers(proj.layers);

@@ -114,3 +114,12 @@ export interface CameraView {
     position: Vector3;
     target: Vector3;
 }
+
+export interface SceneComponent {
+    id: string;
+    name: string;
+    createdAt: number;
+    thumbnail?: string;
+    objects: SceneObject[];
+}
+

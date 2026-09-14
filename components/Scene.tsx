@@ -33,6 +33,7 @@ interface SceneProps {
     onSelect: (idOrIds: string | string[] | null) => void;
     onLassoSelect: (ids: string[]) => void;
     onTransform: (id: string, updates: Partial<SceneObject>) => void;
+    onTransformMultiple?: (updates: { id: string; updates: Partial<SceneObject> }[]) => void;
     onTransformStart: () => void; 
     onTransformEnd: () => void;
     mode: 'translate' | 'rotate' | 'scale';
@@ -293,8 +294,21 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
             gl.getClearColor(origClearColor);
 
             try {
+                // Limit maximum render dimensions to safe mobile WebGL limits (<= 4096px)
+                const maxDim = Math.min(gl.capabilities.maxTextureSize || 4096, 4096);
+                let targetW = Math.round(currentSize.x * (scaleMultiplier || 1));
+                let targetH = Math.round(currentSize.y * (scaleMultiplier || 1));
+                if (targetW > maxDim || targetH > maxDim) {
+                    const ratio = Math.min(maxDim / targetW, maxDim / targetH);
+                    targetW = Math.round(targetW * ratio);
+                    targetH = Math.round(targetH * ratio);
+                }
+
                 if (scaleMultiplier > 1) {
-                    gl.setSize(currentSize.x * scaleMultiplier, currentSize.y * scaleMultiplier, false);
+                    gl.setSize(targetW, targetH, false);
+                    if (camera instanceof THREE.PerspectiveCamera || camera instanceof THREE.OrthographicCamera) {
+                        camera.updateProjectionMatrix();
+                    }
                 }
                 if (transparent) {
                     gl.setClearColor(0x000000, 0);
@@ -304,12 +318,18 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
 
                 gl.render(scene, camera);
                 const dataUrl = gl.domElement.toDataURL(format || 'image/png');
+                if (!dataUrl || dataUrl === 'data:,' || dataUrl.length < 50) {
+                    throw new Error("Canvas render output is empty or failed to capture");
+                }
                 return dataUrl;
             } finally {
                 // Restore original dimensions and clear color
                 gl.setSize(currentSize.x, currentSize.y, false);
                 gl.setPixelRatio(currentPixelRatio);
                 gl.setClearColor(origClearColor, origClearAlpha);
+                if (camera instanceof THREE.PerspectiveCamera || camera instanceof THREE.OrthographicCamera) {
+                    camera.updateProjectionMatrix();
+                }
                 gl.render(scene, camera);
             }
         },
@@ -1050,11 +1070,9 @@ const smoothVector3Points = (points: THREE.Vector3[], iterations: number = 2): T
 };
 
 // Gesture Handler Component
-const GestureHandler = ({ onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRedo, controlsRef }: any) => {
+const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
     const { gl } = useThree();
     const lastOneFingerTap = useRef(0);
-    const lastTwoFingerTap = useRef(0);
-    const lastThreeFingerTap = useRef(0);
     const oneFingerTimer = useRef<any>(null);
     const threeFingerStart = useRef<number | null>(null);
     const maxTouches = useRef<number>(0);
@@ -1072,11 +1090,11 @@ const GestureHandler = ({ onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRed
                     clearTimeout(oneFingerTimer.current);
                     oneFingerTimer.current = null;
                 }
-                lastOneFingerTap.current = 0; // Invalidate 1-finger double-tap so it NEVER triggers accidentally
+                lastOneFingerTap.current = 0;
             }
 
             if (touchCount === 1) {
-                // Buffer of 60ms to prevent multi-finger touches from falsely triggering single-finger gestures
+                // 1-finger double tap to snap camera to closest orthogonal view (Top, Bottom, Front, Back, Right, Left)
                 if (oneFingerTimer.current) {
                     clearTimeout(oneFingerTimer.current);
                 }
@@ -1092,26 +1110,8 @@ const GestureHandler = ({ onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRed
                         }
                     }
                 }, 60);
-            } else if (touchCount === 2) {
-                // 2-finger double tap for Undo (Ctrl+Z)
-                const now = Date.now();
-                if (now - lastTwoFingerTap.current < 380) {
-                    if (onUndo) onUndo();
-                    lastTwoFingerTap.current = 0;
-                } else {
-                    lastTwoFingerTap.current = now;
-                }
             } else if (touchCount === 3) {
-                // 3-finger double tap for Redo (Ctrl+Y)
-                const now = Date.now();
-                if (now - lastThreeFingerTap.current < 380) {
-                    if (onRedo) onRedo();
-                    lastThreeFingerTap.current = 0;
-                } else {
-                    lastThreeFingerTap.current = now;
-                }
-
-                // Prepare for 3-finger FOV drag
+                // Prepare for 3-finger vertical drag to adjust camera FOV / lens fuga
                 if (controlsRef?.current) controlsRef.current.enabled = false;
                 threeFingerStart.current = e.touches[0].clientY;
             }
@@ -1120,7 +1120,7 @@ const GestureHandler = ({ onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRed
         const handleTouchMove = (e: TouchEvent) => {
             if (e.touches.length === 3 && threeFingerStart.current !== null) {
                 e.preventDefault();
-                e.stopPropagation(); // Consume event for FOV
+                e.stopPropagation(); // Consume event for FOV / lens adjustment
                 const delta = threeFingerStart.current - e.touches[0].clientY;
                 onAdjustFOV(delta);
                 threeFingerStart.current = e.touches[0].clientY;
@@ -1149,15 +1149,15 @@ const GestureHandler = ({ onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRed
             el.removeEventListener('touchend', handleTouchEnd);
             el.removeEventListener('touchcancel', handleTouchEnd);
             if (controlsRef?.current) controlsRef.current.enabled = true;
-        }
-    }, [onSnapView, onToggleCamera, onAdjustFOV, onUndo, onRedo, gl, controlsRef]);
+        };
+    }, [onSnapView, onAdjustFOV, gl, controlsRef]);
     
     return null;
 };
 
 // Scene Content Manager
 const SceneContent = ({ 
-    objects, visibleLayerIds, selectedIds, lockedLayerIds, onSelect, onLassoSelect, onTransform, onTransformStart, onTransformEnd,
+    objects, visibleLayerIds, selectedIds, lockedLayerIds, onSelect, onLassoSelect, onTransform, onTransformMultiple, onTransformStart, onTransformEnd,
     mode, isDrawingMode, activeTool, eraserMode, eraserSize = 0.2, currentBrushColor, currentBrushSize, currentBrushSmoothing, 
     isSymmetryEnabled, symmetryX, symmetryAxis = 'x', symmetryPosition = {x:0,y:0,z:0},
     areGeometryVisible, onStrokeComplete, onErase, onPartialErase,
@@ -1186,6 +1186,22 @@ const SceneContent = ({
     const isTransformingRef = useRef(false);
     const [camType, setCamType] = useState<'perspective' | 'orthographic'>('perspective');
     const [cameraFov, setCameraFov] = useState(45);
+    const [orthoZoom, setOrthoZoom] = useState(40);
+
+    // Automatically transition back to perspective view when the user begins orbiting in 3D
+    useEffect(() => {
+        const controls = controlsRef.current;
+        if (!controls) return;
+        const handleOrbitStart = () => {
+            if (camType === 'orthographic') {
+                setCamType('perspective');
+            }
+        };
+        controls.addEventListener('start', handleOrbitStart);
+        return () => {
+            controls.removeEventListener('start', handleOrbitStart);
+        };
+    }, [camType]);
 
     // Orbit Controls: Only allow orbiting with fingers (touch) or mouse.
     // Pen / stylus is strictly for drawing, selecting, or transforming.
@@ -1231,7 +1247,7 @@ const SceneContent = ({
         };
     }, [targetObject, mode]);
 
-    // Update target object for TransformControls
+    // Update target object for TransformControls (Single Selection)
     useEffect(() => {
         if (selectedIds.length === 1 && objectsGroupRef.current) {
             const obj = objectsGroupRef.current.children.find(c => c.userData.id === selectedIds[0]);
@@ -1241,68 +1257,122 @@ const SceneContent = ({
         }
     }, [selectedIds, objects]);
 
-    // Gesture Callbacks
+    // Multi-selection Centroid & Transform Proxy
+    const multiCentroid = useMemo(() => {
+        if (selectedIds.length <= 1) return null;
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        let count = 0;
+        selectedIds.forEach(id => {
+            const obj = objects.find(o => o.id === id);
+            if (obj && obj.position) {
+                minX = Math.min(minX, obj.position.x);
+                minY = Math.min(minY, obj.position.y);
+                minZ = Math.min(minZ, obj.position.z);
+                maxX = Math.max(maxX, obj.position.x);
+                maxY = Math.max(maxY, obj.position.y);
+                maxZ = Math.max(maxZ, obj.position.z);
+                count++;
+            }
+        });
+        if (count === 0) return null;
+        return new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+    }, [selectedIds, objects]);
+
+    const multiProxyMeshRef = useRef<THREE.Mesh>(null);
+    const multiTransformControlsRef = useRef<any>(null);
+    const initialCentroidRef = useRef<THREE.Vector3 | null>(null);
+    const initialMultiPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+
+    useEffect(() => {
+        if (multiProxyMeshRef.current && multiCentroid) {
+            multiProxyMeshRef.current.position.copy(multiCentroid);
+        }
+    }, [multiCentroid]);
+
+    useEffect(() => {
+        const mtc = multiTransformControlsRef.current;
+        if (!mtc) return;
+        const handleDragging = (event: any) => {
+            isTransformingRef.current = !!event.value;
+            if (controlsRef.current) {
+                controlsRef.current.enabled = !event.value;
+            }
+        };
+        mtc.addEventListener('dragging-changed', handleDragging);
+        return () => {
+            mtc.removeEventListener('dragging-changed', handleDragging);
+        };
+    }, [selectedIds]);
+
+    // Gesture Callbacks: Snap to Closest Canonical View in 100% Orthographic Projection (Sin Perspectiva)
     const handleSnapView = useCallback(() => {
         const controls = controlsRef.current;
         if (!controls) return;
         
-        // Get camera direction
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
+        const target = controls.target ? controls.target.clone() : new THREE.Vector3(0, 0, 0);
+        const relPos = camera.position.clone().sub(target);
+        const dist = Math.max(relPos.length(), 6);
+        const dir = relPos.clone().normalize();
         
-        // Find nearest axis
-        const axes = [
-            new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
-            new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
-            new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+        const views = [
+            { name: 'Vista Superior (Top)', dir: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(0, dist, 0.0001), up: new THREE.Vector3(0, 0, -1) },
+            { name: 'Vista Inferior (Bottom)', dir: new THREE.Vector3(0, -1, 0), pos: new THREE.Vector3(0, -dist, 0.0001), up: new THREE.Vector3(0, 0, 1) },
+            { name: 'Vista Frontal (Front)', dir: new THREE.Vector3(0, 0, 1), pos: new THREE.Vector3(0, 0, dist), up: new THREE.Vector3(0, 1, 0) },
+            { name: 'Vista Posterior (Back)', dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 0, -dist), up: new THREE.Vector3(0, 1, 0) },
+            { name: 'Vista Derecha (Right)', dir: new THREE.Vector3(1, 0, 0), pos: new THREE.Vector3(dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
+            { name: 'Vista Izquierda (Left)', dir: new THREE.Vector3(-1, 0, 0), pos: new THREE.Vector3(-dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
         ];
         
-        let bestAxis = axes[0];
+        let bestView = views[0];
         let maxDot = -Infinity;
-        
-        // We want the axis most opposing the direction vector (looking AT the axis)
-        axes.forEach(axis => {
-            const dot = dir.dot(axis);
-            if (dot < maxDot) { // Look for most negative dot product (facing opposite)
+        views.forEach(v => {
+            const dot = dir.dot(v.dir);
+            if (dot > maxDot) {
                 maxDot = dot;
-                bestAxis = axis;
+                bestView = v;
             }
         });
         
-        const target = controls.target;
-        const pos = camera.position.clone().sub(target);
-        const dist = pos.length();
-        
-        // Find dominant component
-        const x = Math.abs(pos.x);
-        const y = Math.abs(pos.y);
-        const z = Math.abs(pos.z);
-        
-        const newPos = new THREE.Vector3();
-        
-        if (x >= y && x >= z) {
-            newPos.set(Math.sign(pos.x) * dist, 0, 0);
-        } else if (y >= x && y >= z) {
-            newPos.set(0, Math.sign(pos.y) * dist, 0);
-        } else {
-            newPos.set(0, 0, Math.sign(pos.z) * dist);
+        const destPos = target.clone().add(bestView.pos);
+        camera.up.copy(bestView.up);
+
+        const visibleHeight = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cameraFov / 2));
+        const matchingZoom = gl.domElement.clientHeight / Math.max(visibleHeight, 0.1);
+        setOrthoZoom(matchingZoom);
+
+        if (onFOVDisplayChange) {
+            onFOVDisplayChange(`${bestView.name} • Ortográfica (Sin Fuga)`);
+            if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
+            fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 2000);
         }
-        
+
         gsap.to(camera.position, {
-            x: target.x + newPos.x,
-            y: target.y + newPos.y,
-            z: target.z + newPos.z,
-            duration: 0.5,
+            x: destPos.x,
+            y: destPos.y,
+            z: destPos.z,
+            duration: 0.45,
             ease: "power2.out",
-            onUpdate: () => controls.update()
+            onUpdate: () => {
+                camera.lookAt(target);
+                controls.update();
+            },
+            onComplete: () => {
+                setCamType('orthographic');
+            }
         });
-    }, [camera]);
+    }, [camera, cameraFov, gl, onFOVDisplayChange]);
 
     const handleToggleCamera = useCallback(() => {
         setCamType(prev => prev === 'perspective' ? 'orthographic' : 'perspective');
     }, []);
 
     const handleAdjustFOV = useCallback((delta: number) => {
+        // Adjusting focal length / fuga automatically operates in perspective view
+        if (camType === 'orthographic') {
+            setCamType('perspective');
+        }
+
         if (camera instanceof THREE.PerspectiveCamera) {
             const oldFov = camera.fov;
             // Dragging up (delta > 0) -> wider lens (more perspective/fuga, higher FOV)
@@ -1359,27 +1429,44 @@ const SceneContent = ({
                 fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 1500);
             }
         }
-    }, [camera, onFOVDisplayChange]);
+    }, [camera, camType, onFOVDisplayChange]);
 
-    // Apply Camera Actions
+    // Apply Camera Actions with Orthographic Mode for Canonical Views
     useEffect(() => {
         if (!cameraAction || !controlsRef.current) return;
         
         const controls = controlsRef.current;
-        const duration = 1.0; 
-        
+        const duration = 0.8; 
         const dist = 14;
+
+        const setOrthoForAction = (viewName: string) => {
+            const visibleHeight = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cameraFov / 2));
+            setOrthoZoom(gl.domElement.clientHeight / Math.max(visibleHeight, 0.1));
+            if (onFOVDisplayChange) {
+                onFOVDisplayChange(`${viewName} • Ortográfica (Sin Fuga)`);
+                if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
+                fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 2000);
+            }
+        };
+
         if (cameraAction.type === 'reset') {
+             setCamType('perspective');
              gsap.to(camera.position, { x: 10, y: 10, z: 10, duration, ease: "power2.inOut", onUpdate: () => controls.update() });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'top') {
-             gsap.to(camera.position, { x: 0, y: dist, z: 0.001, duration, ease: "power2.inOut", onUpdate: () => controls.update() });
+             camera.up.set(0, 0, -1);
+             setOrthoForAction('Vista Superior (Top)');
+             gsap.to(camera.position, { x: 0, y: dist, z: 0.001, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'front') {
-             gsap.to(camera.position, { x: 0, y: 0, z: dist, duration, ease: "power2.inOut", onUpdate: () => controls.update() });
+             camera.up.set(0, 1, 0);
+             setOrthoForAction('Vista Frontal (Front)');
+             gsap.to(camera.position, { x: 0, y: 0, z: dist, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'right') {
-             gsap.to(camera.position, { x: dist, y: 0, z: 0, duration, ease: "power2.inOut", onUpdate: () => controls.update() });
+             camera.up.set(0, 1, 0);
+             setOrthoForAction('Vista Derecha (Right)');
+             gsap.to(camera.position, { x: dist, y: 0, z: 0, duration, ease: "power2.inOut", onUpdate: () => controls.update(), onComplete: () => setCamType('orthographic') });
              gsap.to(controls.target, { x: 0, y: 0, z: 0, duration, ease: "power2.inOut" });
         } else if (cameraAction.type === 'custom' && cameraAction.view) {
              const v = cameraAction.view;
@@ -1388,7 +1475,7 @@ const SceneContent = ({
         }
         
         onCameraActionHandled();
-    }, [cameraAction, camera, onCameraActionHandled]);
+    }, [cameraAction, camera, cameraFov, gl, onCameraActionHandled, onFOVDisplayChange]);
 
     useFrame(() => {
         if (onCameraDirectionUpdate && camera) {
@@ -1740,15 +1827,24 @@ const SceneContent = ({
         <>
             <GestureHandler 
                 onSnapView={handleSnapView} 
-                onToggleCamera={handleToggleCamera} 
                 onAdjustFOV={handleAdjustFOV}
-                onUndo={onUndo}
-                onRedo={onRedo}
                 controlsRef={controlsRef}
             />
             
-            {camType === 'perspective' && <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={cameraFov} />}
-            {camType === 'orthographic' && <OrthographicCamera makeDefault position={[10, 10, 10]} zoom={40} />}
+            {camType === 'perspective' && (
+                <PerspectiveCamera 
+                    makeDefault 
+                    position={[camera.position.x || 10, camera.position.y || 10, camera.position.z || 10]} 
+                    fov={cameraFov} 
+                />
+            )}
+            {camType === 'orthographic' && (
+                <OrthographicCamera 
+                    makeDefault 
+                    position={[camera.position.x || 10, camera.position.y || 10, camera.position.z || 10]} 
+                    zoom={orthoZoom} 
+                />
+            )}
 
             <group ref={objectsGroupRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerMissed={handleMiss}>
                 {/* GRID REMOVED */}
@@ -1920,6 +2016,62 @@ const SceneContent = ({
                 </group>
             )}
 
+            {/* MULTI-OBJECT TRANSFORM CONTROLS (GUMBALL) */}
+            {selectedIds.length > 1 && activeTool === 'select' && multiCentroid && (
+                <group key="multi-transform-group">
+                    <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]} visible={false}>
+                        <boxGeometry args={[0.01, 0.01, 0.01]} />
+                        <meshBasicMaterial transparent opacity={0} />
+                    </mesh>
+                    <TransformControls 
+                        ref={multiTransformControlsRef}
+                        object={multiProxyMeshRef} 
+                        mode={mode} 
+                        onMouseDown={() => {
+                            isTransformingRef.current = true;
+                            if (controlsRef.current) controlsRef.current.enabled = false;
+                            if (multiProxyMeshRef.current) {
+                                initialCentroidRef.current = multiProxyMeshRef.current.position.clone();
+                                const map = new Map<string, { x: number; y: number; z: number }>();
+                                selectedIds.forEach(id => {
+                                    const obj = objects.find(o => o.id === id);
+                                    if (obj && obj.position) map.set(id, { ...obj.position });
+                                });
+                                initialMultiPositionsRef.current = map;
+                            }
+                            onTransformStart();
+                        }}
+                        onMouseUp={() => {
+                            isTransformingRef.current = false;
+                            onTransformEnd();
+                        }}
+                        onChange={() => {
+                            if (multiProxyMeshRef.current && initialCentroidRef.current && onTransformMultiple) {
+                                const cur = multiProxyMeshRef.current.position;
+                                const dx = cur.x - initialCentroidRef.current.x;
+                                const dy = cur.y - initialCentroidRef.current.y;
+                                const dz = cur.z - initialCentroidRef.current.z;
+                                const updates = selectedIds.map(id => {
+                                    const init = initialMultiPositionsRef.current.get(id) || { x: 0, y: 0, z: 0 };
+                                    return {
+                                        id,
+                                        updates: {
+                                            position: {
+                                                x: init.x + dx,
+                                                y: init.y + dy,
+                                                z: init.z + dz
+                                            }
+                                        }
+                                    };
+                                });
+                                onTransformMultiple(updates);
+                            }
+                        }}
+                        size={0.8}
+                    />
+                </group>
+            )}
+
              {/* SYMMETRY PLANE TRANSFORM */}
              {selectedIds.includes('symmetry-plane') && activeTool === 'select' && (
                  <TransformControls 
@@ -1952,7 +2104,13 @@ const SceneContent = ({
             )}
 
             <OrbitControls ref={controlsRef} makeDefault minPolarAngle={0} maxPolarAngle={Math.PI} enableDamping dampingFactor={0.1} />
-            <Environment preset="city" />
+            
+            {/* 100% OFFLINE STUDIO LIGHTING RIG (Zero network fetch / No potsdamer_platz_1k.hdr error / No tainted canvas) */}
+            <ambientLight intensity={0.75} />
+            <hemisphereLight args={['#ffffff', '#475569', 0.65]} />
+            <directionalLight position={[15, 25, 15]} intensity={1.1} castShadow />
+            <directionalLight position={[-15, 15, -15]} intensity={0.45} />
+            <directionalLight position={[0, -10, 0]} intensity={0.2} />
             
             <SceneExporter ref={exportRef} objects={objects} objectsGroupRef={objectsGroupRef} />
         </>
