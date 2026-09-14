@@ -1,7 +1,8 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { SceneObject, Vector3 } from '../types';
 import { Copy, Trash2 } from 'lucide-react';
+import { ColorPickerModal } from './ColorPickerModal';
 
 interface PropertiesPanelProps {
     object: SceneObject | null;
@@ -12,6 +13,7 @@ interface PropertiesPanelProps {
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ object, onChange, onDelete, onDuplicate, selectedCount }) => {
+    const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
     
     if (selectedCount > 1) {
          return (
@@ -207,14 +209,23 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ object, onChange, onD
                      <span className="text-xs text-gray-600">Base Color</span>
                      <div className="flex items-center gap-2">
                         <span className="text-[10px] text-gray-400 font-mono uppercase">{object.material.color}</span>
-                        <input 
-                            type="color" 
-                            value={object.material.color.startsWith('#') ? object.material.color : '#ffffff'}
-                            onChange={(e) => updateMaterial('color', e.target.value)}
-                            className="w-6 h-6 rounded cursor-pointer bg-transparent border-none"
+                        <button 
+                            type="button"
+                            onClick={() => setIsColorPickerOpen(true)}
+                            className="w-7 h-7 rounded-full border-2 border-white shadow-sm cursor-pointer hover:scale-105 transition-transform"
+                            style={{ backgroundColor: object.material.color }}
+                            title="Seleccionar Color"
                         />
                     </div>
                 </div>
+
+                <ColorPickerModal 
+                    isOpen={isColorPickerOpen}
+                    initialColor={object.material.color}
+                    title="Color del Objeto"
+                    onClose={() => setIsColorPickerOpen(false)}
+                    onColorSelect={(color) => updateMaterial('color', color)}
+                />
             </div>
             
             <div className="pt-4 mt-auto">

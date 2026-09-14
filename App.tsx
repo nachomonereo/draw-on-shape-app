@@ -14,8 +14,9 @@ import { ExportPNGModal } from './components/ExportPNGModal';
 import { saveOrShareFile } from './utils/downloadHelper';
 import { Language, getTranslation } from './utils/translations';
 import { App as CapApp } from '@capacitor/app';
-import { User, Save, FileText, LayoutTemplate, Copy, Check, Pen } from 'lucide-react';
+import { User, Save, FileText, LayoutTemplate, Copy, Check, Pen, ChevronLeft, ChevronRight, Layers as LayersIcon } from 'lucide-react';
 import * as THREE from 'three';
+import { ColorPickerModal } from './components/ColorPickerModal';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -178,6 +179,8 @@ export default function App() {
     const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
     const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
     const [isBgMenuOpen, setIsBgMenuOpen] = useState(false);
+    const [isBgColorPickerOpen, setIsBgColorPickerOpen] = useState(false);
+    const [isLayersPanelCollapsed, setIsLayersPanelCollapsed] = useState(false);
 
     // Brush Presets
     const [brushPresets, setBrushPresets] = useState<BrushPreset[]>([
@@ -282,15 +285,80 @@ export default function App() {
         };
         selectedIds.forEach(id => collectIds(id));
 
-        const componentObjs = currentObjs.filter(o => allTargetIds.has(o.id));
-        if (componentObjs.length === 0) return;
+        const rawObjs = currentObjs.filter(o => allTargetIds.has(o.id));
+        if (rawObjs.length === 0) return;
 
-        const defaultName = componentObjs.find(o => o.type === 'group')?.name || `Componente ${customComponents.length + 1}`;
+        const defaultName = rawObjs.find(o => o.type === 'group')?.name || `User Object ${customComponents.length + 1}`;
         const inputName = window.prompt(
-            language === 'en' ? "Enter component name:" : "Introduce el nombre del componente:",
+            language === 'en' ? "Enter User Object name:" : "Introduce el nombre del User Object:",
             defaultName
         );
         if (!inputName || !inputName.trim()) return;
+
+        // USER OBJECTS ARE ALWAYS GROUPED BY DEFAULT!
+        const rootNodes = rawObjs.filter(o => !o.parentId || !allTargetIds.has(o.parentId));
+        let componentObjs: SceneObject[] = [];
+
+        if (rootNodes.length === 1 && rootNodes[0].type === 'group') {
+            // Already a single group: normalize so group root is at (0, 0, 0)
+            const root = rootNodes[0];
+            const rootPos = { ...root.position };
+            componentObjs = rawObjs.map(o => {
+                if (o.id === root.id) {
+                    return { ...o, position: { x: 0, y: 0, z: 0 }, parentId: undefined };
+                }
+                return { ...o };
+            });
+        } else {
+            // Auto-wrap in a single root Group with children in their respective positions
+            let avgX = 0, avgY = 0, avgZ = 0;
+            rootNodes.forEach(o => {
+                const wt = getObjectWorldTransform(o, currentObjs);
+                avgX += wt.position.x;
+                avgY += wt.position.y;
+                avgZ += wt.position.z;
+            });
+            const center = {
+                x: avgX / rootNodes.length,
+                y: avgY / rootNodes.length,
+                z: avgZ / rootNodes.length
+            };
+
+            const rootGroupId = generateId();
+            const rootGroup: SceneObject = {
+                id: rootGroupId,
+                layerId: rootNodes[0].layerId || ensureActiveLayerType('geometry'),
+                name: inputName.trim(),
+                type: 'group',
+                visible: true,
+                position: { x: 0, y: 0, z: 0 }, // Local origin of the User Object
+                rotation: { x: 0, y: 0, z: 0 },
+                scale: { x: 1, y: 1, z: 1 },
+                material: { color: '#ffffff', roughness: 0.5, metalness: 0, opacity: 1 }
+            };
+
+            const rootIdsSet = new Set(rootNodes.map(o => o.id));
+            const remappedChildren = rawObjs.map(o => {
+                if (rootIdsSet.has(o.id)) {
+                    const wt = getObjectWorldTransform(o, currentObjs);
+                    const euler = new THREE.Euler().setFromQuaternion(wt.quaternion);
+                    return {
+                        ...o,
+                        parentId: rootGroupId,
+                        position: {
+                            x: wt.position.x - center.x,
+                            y: wt.position.y - center.y,
+                            z: wt.position.z - center.z
+                        },
+                        rotation: { x: euler.x, y: euler.y, z: euler.z },
+                        scale: { x: wt.scale.x, y: wt.scale.y, z: wt.scale.z }
+                    };
+                }
+                return { ...o };
+            });
+
+            componentObjs = [rootGroup, ...remappedChildren];
+        }
 
         const newComp: SceneComponent = {
             id: generateId(),
@@ -301,29 +369,40 @@ export default function App() {
 
         const updated = [newComp, ...customComponents];
         saveComponentsToStorage(updated);
-        showNotification(language === 'en' ? `Component '${newComp.name}' saved to library!` : `¡Componente '${newComp.name}' guardado en la biblioteca!`);
+        showNotification(language === 'en' ? `User Object '${newComp.name}' saved to library!` : `¡User Object '${newComp.name}' guardado en la biblioteca!`);
     };
 
     const handleInsertComponent = (comp: SceneComponent) => {
         if (!comp.objects || comp.objects.length === 0) return;
 
+        // AUTOMATICALLY PLACED AT THE CENTER OF THE CURRENT SCREEN (CAMERA TARGET)
+        let spawnPos = { x: 0, y: 0, z: 0 };
+        const camState = exportRef.current?.getCameraState?.();
+        if (camState && camState.target) {
+            spawnPos = { ...camState.target };
+        }
+
         const idMap = new Map<string, string>();
         comp.objects.forEach(o => idMap.set(o.id, generateId()));
         const targetLayerId = ensureActiveLayerType('geometry');
 
+        // Identify the root group of the User Object
+        const rootObj = comp.objects.find(o => !o.parentId);
+        const newRootId = rootObj ? (idMap.get(rootObj.id) || generateId()) : generateId();
+
         const clonedObjs: SceneObject[] = comp.objects.map(obj => {
             const newId = idMap.get(obj.id) || generateId();
-            const newParentId = obj.parentId ? idMap.get(obj.parentId) : undefined;
+            const isRoot = !obj.parentId;
+            const newParentId = isRoot ? undefined : (idMap.get(obj.parentId!) || newRootId);
+
             return {
                 ...obj,
                 id: newId,
                 parentId: newParentId,
                 layerId: targetLayerId,
-                position: {
-                    x: obj.position.x + (Math.random() * 0.4 - 0.2),
-                    y: obj.position.y,
-                    z: obj.position.z + (Math.random() * 0.4 - 0.2)
-                }
+                position: isRoot 
+                    ? { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z } 
+                    : { x: obj.position.x, y: obj.position.y, z: obj.position.z }
             };
         });
 
@@ -331,17 +410,18 @@ export default function App() {
         updateSceneState(newAllObjects);
         addToHistory(newAllObjects);
 
-        const rootNewIds = clonedObjs.filter(o => !o.parentId).map(o => o.id);
-        setSelectedIds(rootNewIds);
+        // Select ONLY the root group so it manipulates rigidly without collapsing
+        setSelectedIds([newRootId]);
         handleToolChange('select');
+        setTransformMode('translate');
 
-        showNotification(language === 'en' ? `Component '${comp.name}' inserted!` : `¡Componente '${comp.name}' insertado!`);
+        showNotification(language === 'en' ? `User Object '${comp.name}' placed at screen center!` : `¡User Object '${comp.name}' colocado en el centro de la pantalla!`);
     };
 
     const handleDeleteComponent = (id: string) => {
         const updated = customComponents.filter(c => c.id !== id);
         saveComponentsToStorage(updated);
-        showNotification(language === 'en' ? "Component removed" : "Componente eliminado");
+        showNotification(language === 'en' ? "User Object removed" : "User Object eliminado");
     };
 
     const handleExportComponent = async (comp: SceneComponent) => {
@@ -349,13 +429,13 @@ export default function App() {
             const jsonStr = JSON.stringify(comp, null, 2);
             const blob = new Blob([jsonStr], { type: 'application/json' });
             const sanitizedName = comp.name.replace(/[^a-zA-Z0-9_\-]/g, '_');
-            const res = await saveOrShareFile(blob, `${sanitizedName}_component.json`, 'application/json');
+            const res = await saveOrShareFile(blob, `${sanitizedName}_user_object.json`, 'application/json');
             if (res.success) {
-                showNotification(language === 'en' ? `Exported ${sanitizedName}` : `Componente exportado correctamente`);
+                showNotification(language === 'en' ? `Exported ${sanitizedName}` : `User Object exportado correctamente`);
             }
         } catch (e: any) {
-            console.error("Export component error:", e);
-            showNotification(language === 'en' ? "Failed to export component" : "Error al exportar componente");
+            console.error("Export User Object error:", e);
+            showNotification(language === 'en' ? "Failed to export User Object" : "Error al exportar User Object");
         }
     };
 
@@ -398,18 +478,33 @@ export default function App() {
         };
         objectIds.forEach(id => collectIds(id));
 
+        const isTargetTrace = targetLayer.type === 'trace';
+        let movedCount = 0;
+
         const updated = currentObjs.map(obj => {
             if (allTargetIds.has(obj.id)) {
-                return { ...obj, layerId: targetLayerId };
+                const isStroke = obj.type === 'stroke';
+                // Enforce: Traces only to trace layers, geometries only to geometry layers
+                if ((isTargetTrace && isStroke) || (!isTargetTrace && !isStroke)) {
+                    movedCount++;
+                    return { ...obj, layerId: targetLayerId };
+                }
             }
             return obj;
         });
 
+        if (movedCount === 0) {
+            showNotification(language === 'en' 
+                ? "Geometries only go to geometry layers, and traces to trace layers"
+                : "Las geometrías solo van a capas de geometría y los trazos a capas de trazos");
+            return;
+        }
+
         updateSceneState(updated);
         addToHistory(updated);
         showNotification(language === 'en' 
-            ? `${objectIds.length} element(s) moved to "${targetLayer.name}"` 
-            : `${objectIds.length} elemento(s) movidos a "${targetLayer.name}"`);
+            ? `${movedCount} element(s) moved to "${targetLayer.name}"` 
+            : `${movedCount} elemento(s) movidos a "${targetLayer.name}"`);
     };
 
     const handleColorChange = (newColor: string) => {
@@ -564,7 +659,7 @@ export default function App() {
         return obj;
     };
 
-    const MAX_HISTORY_STEPS = 12;
+    const MAX_HISTORY_STEPS = 20;
 
     const addToHistory = (newObjects: SceneObject[]) => {
         const normalized = newObjects.map(normalizeObjectCenter);
@@ -572,7 +667,7 @@ export default function App() {
         let newHistory = historyRef.current.slice(0, curIndex + 1);
         newHistory.push(normalized);
 
-        // Keep maximum 12 steps in history to avoid memory bloat and app crashing
+        // Keep maximum 20 steps in history to avoid memory bloat
         if (newHistory.length > MAX_HISTORY_STEPS) {
             newHistory = newHistory.slice(newHistory.length - MAX_HISTORY_STEPS);
         }
@@ -823,6 +918,33 @@ export default function App() {
         handleUpdateObject(id, updated);
     };
 
+    const getObjectWorldTransform = (obj: SceneObject, allObjects: SceneObject[]): { position: THREE.Vector3, quaternion: THREE.Quaternion, scale: THREE.Vector3 } => {
+        const chain: SceneObject[] = [obj];
+        let curr = obj;
+        while (curr.parentId) {
+            const parent = allObjects.find(p => p.id === curr.parentId);
+            if (!parent || chain.some(c => c.id === parent.id)) break;
+            chain.unshift(parent);
+            curr = parent;
+        }
+
+        const worldMatrix = new THREE.Matrix4();
+        chain.forEach(node => {
+            const p = new THREE.Vector3(node.position.x, node.position.y, node.position.z);
+            const r = new THREE.Euler(node.rotation.x, node.rotation.y, node.rotation.z);
+            const q = new THREE.Quaternion().setFromEuler(r);
+            const s = new THREE.Vector3(node.scale.x, node.scale.y, node.scale.z);
+            const nodeMatrix = new THREE.Matrix4().compose(p, q, s);
+            worldMatrix.multiply(nodeMatrix);
+        });
+
+        const position = new THREE.Vector3();
+        const quaternion = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+        worldMatrix.decompose(position, quaternion, scale);
+        return { position, quaternion, scale };
+    };
+
     const getRootParentId = (id: string, objects: SceneObject[]): string => {
         let current = objects.find(o => o.id === id);
         while (current && current.parentId) {
@@ -918,7 +1040,7 @@ export default function App() {
             setLoftSelection(newSelection);
             setSelectedIds(newSelection);
             setActiveTool('loft-step-2');
-            setInstruction(`Loft: ${newSelection.length} curvas seleccionadas (Toca más o pulsa ✓)`);
+            setInstruction(`Loft: ${newSelection.length} curvas seleccionadas (Toca más o pulsa OK)`);
             return;
         }
 
@@ -1045,13 +1167,13 @@ export default function App() {
             };
             const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
             const safeName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            const filename = `${safeName}-${Date.now()}.json`;
+            const filename = `${safeName}-${Date.now()}.drawonshape.json`;
             const res = await saveOrShareFile(blob, filename, 'application/json');
             setIsMenuOpen(false);
             if (res.cancelled) {
                 showNotification(language === 'en' ? "Save cancelled" : "Guardado cancelado");
             } else if (res.success) {
-                showNotification(language === 'en' ? "Project exported as JSON!" : "¡Proyecto exportado como JSON!");
+                showNotification(language === 'en' ? "Project exported as .drawonshape.json!" : "¡Proyecto exportado como .drawonshape.json!");
             }
         } catch (e) {
             console.error("Save failed", e);
@@ -1257,104 +1379,141 @@ export default function App() {
 
     const handleGroup = () => {
         if (selectedIds.length < 2) return;
-        const selectedObjs = sceneObjects.filter(o => selectedIds.includes(o.id));
-        if (selectedObjs.length < 2) return;
+        const currentObjs = sceneObjectsRef.current;
+
+        // 1. Identify all selected objects
+        const rawSelected = currentObjs.filter(o => selectedIds.includes(o.id));
+        if (rawSelected.length < 2) return;
+
+        // 2. Filter to only the highest-level selected nodes:
+        // If an object's ancestor is also in rawSelected, do NOT re-parent it directly to the new group.
+        // It stays a child of its parent group, keeping the sub-hierarchy intact.
+        const topSelectedObjs = rawSelected.filter(obj => {
+            let curr = obj;
+            while (curr.parentId) {
+                if (selectedIds.includes(curr.parentId)) {
+                    return false;
+                }
+                const parent = currentObjs.find(p => p.id === curr.parentId);
+                if (!parent) break;
+                curr = parent;
+            }
+            return true;
+        });
+
+        if (topSelectedObjs.length < 2) return;
+
+        // 3. Compute true world transforms and group centroid
+        const worldTransforms = new Map<string, { position: THREE.Vector3, quaternion: THREE.Quaternion, scale: THREE.Vector3 }>();
+        let avgX = 0, avgY = 0, avgZ = 0;
+        topSelectedObjs.forEach(o => {
+            const wt = getObjectWorldTransform(o, currentObjs);
+            worldTransforms.set(o.id, wt);
+            avgX += wt.position.x;
+            avgY += wt.position.y;
+            avgZ += wt.position.z;
+        });
+
+        const center = {
+            x: avgX / topSelectedObjs.length,
+            y: avgY / topSelectedObjs.length,
+            z: avgZ / topSelectedObjs.length
+        };
 
         const groupId = generateId();
-        // Inherit layer from first selected object to avoid hiding if geometry layer is disabled
-        const layerId = selectedObjs[0].layerId || ensureActiveLayerType('geometry');
-        
-        let avgX = 0, avgY = 0, avgZ = 0;
-        selectedObjs.forEach(o => { 
-            avgX += o.position.x; 
-            avgY += o.position.y; 
-            avgZ += o.position.z; 
-        });
-        const center = { 
-            x: avgX / selectedObjs.length, 
-            y: avgY / selectedObjs.length, 
-            z: avgZ / selectedObjs.length 
+        const layerId = topSelectedObjs[0].layerId || ensureActiveLayerType('geometry');
+
+        const groupObj: SceneObject = {
+            id: groupId,
+            layerId,
+            name: 'Group',
+            type: 'group',
+            visible: true,
+            position: center,
+            rotation: { x: 0, y: 0, z: 0 },
+            scale: { x: 1, y: 1, z: 1 },
+            material: { color: '#ffffff', roughness: 0.5, metalness: 0, opacity: 1 }
         };
 
-        const groupObj: SceneObject = { 
-            id: groupId, 
-            layerId, 
-            name: 'Group', 
-            type: 'group', 
-            visible: true, 
-            position: center, 
-            rotation: { x: 0, y: 0, z: 0 }, 
-            scale: { x: 1, y: 1, z: 1 }, 
-            material: { color: '#ffffff', roughness: 0.5, metalness: 0, opacity: 1 } 
-        };
-
-        const newObjects = sceneObjects.map(o => { 
-            if (selectedIds.includes(o.id)) { 
-                return { 
-                    ...o, 
-                    parentId: groupId, 
-                    position: { 
-                        x: o.position.x - center.x, 
-                        y: o.position.y - center.y, 
-                        z: o.position.z - center.z 
-                    } 
-                }; 
-            } 
-            return o; 
+        // 4. Update the top selected objects to be children of the new group, positioned relative to center
+        const topIdsSet = new Set(topSelectedObjs.map(o => o.id));
+        const updatedObjects = currentObjs.map(o => {
+            if (topIdsSet.has(o.id)) {
+                const wt = worldTransforms.get(o.id)!;
+                const euler = new THREE.Euler().setFromQuaternion(wt.quaternion);
+                return {
+                    ...o,
+                    parentId: groupId,
+                    position: {
+                        x: wt.position.x - center.x,
+                        y: wt.position.y - center.y,
+                        z: wt.position.z - center.z
+                    },
+                    rotation: { x: euler.x, y: euler.y, z: euler.z },
+                    scale: { x: wt.scale.x, y: wt.scale.y, z: wt.scale.z }
+                };
+            }
+            return o;
         });
 
-        addToHistory([...newObjects, groupObj]);
+        // 5. Clean up any empty groups (groups whose all children were moved out)
+        const finalObjects = updatedObjects.filter(o => {
+            if (o.type === 'group' && o.id !== groupId) {
+                const hasChildren = updatedObjects.some(c => c.parentId === o.id);
+                if (!hasChildren && !selectedIds.includes(o.id)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        const newAll = [...finalObjects, groupObj];
+        updateSceneState(newAll);
+        addToHistory(newAll);
         setSelectedIds([groupId]);
         handleToolChange('select');
         showNotification(language === 'en' ? "Objects grouped" : "Objetos agrupados");
     };
 
     const handleUngroup = () => {
-        const groupsToUngroup = selectedIds.filter(id => sceneObjects.find(o => o.id === id)?.type === 'group');
+        const currentObjs = sceneObjectsRef.current;
+        const groupsToUngroup = selectedIds.filter(id => currentObjs.find(o => o.id === id)?.type === 'group');
         if (groupsToUngroup.length === 0) return;
-        let newObjects = [...sceneObjects];
-        let newSelection: string[] = [];
+
+        let newObjects = [...currentObjs];
+        const newSelection: string[] = [];
 
         groupsToUngroup.forEach(groupId => {
             const groupObj = newObjects.find(o => o.id === groupId);
             if (!groupObj) return;
 
-            const groupEuler = new THREE.Euler(groupObj.rotation.x, groupObj.rotation.y, groupObj.rotation.z);
-            const groupQuaternion = new THREE.Quaternion().setFromEuler(groupEuler);
-            const groupScale = new THREE.Vector3(groupObj.scale.x, groupObj.scale.y, groupObj.scale.z);
-            const groupPos = new THREE.Vector3(groupObj.position.x, groupObj.position.y, groupObj.position.z);
+            // Direct children of this group
+            const directChildren = newObjects.filter(o => o.parentId === groupId);
 
-            newObjects = newObjects.map(o => { 
-                if (o.parentId === groupId) { 
-                    newSelection.push(o.id);
+            directChildren.forEach(child => {
+                newSelection.push(child.id);
+                const wt = getObjectWorldTransform(child, newObjects);
+                const euler = new THREE.Euler().setFromQuaternion(wt.quaternion);
 
-                    const childPos = new THREE.Vector3(o.position.x, o.position.y, o.position.z);
-                    childPos.multiply(groupScale);
-                    childPos.applyQuaternion(groupQuaternion);
-                    childPos.add(groupPos);
-
-                    const childEuler = new THREE.Euler(o.rotation.x, o.rotation.y, o.rotation.z);
-                    const childQuat = new THREE.Quaternion().setFromEuler(childEuler);
-                    childQuat.premultiply(groupQuaternion);
-                    const finalEuler = new THREE.Euler().setFromQuaternion(childQuat);
-
-                    return { 
-                        ...o, 
-                        parentId: groupObj.parentId || undefined, 
-                        position: { x: childPos.x, y: childPos.y, z: childPos.z },
-                        rotation: { x: finalEuler.x, y: finalEuler.y, z: finalEuler.z },
-                        scale: {
-                            x: o.scale.x * groupObj.scale.x,
-                            y: o.scale.y * groupObj.scale.y,
-                            z: o.scale.z * groupObj.scale.z
-                        }
-                    }; 
-                } 
-                return o; 
+                newObjects = newObjects.map(o => {
+                    if (o.id === child.id) {
+                        return {
+                            ...o,
+                            parentId: groupObj.parentId || undefined,
+                            position: { x: wt.position.x, y: wt.position.y, z: wt.position.z },
+                            rotation: { x: euler.x, y: euler.y, z: euler.z },
+                            scale: { x: wt.scale.x, y: wt.scale.y, z: wt.scale.z }
+                        };
+                    }
+                    return o;
+                });
             });
+
+            // Remove the group container
             newObjects = newObjects.filter(o => o.id !== groupId);
         });
 
+        updateSceneState(newObjects);
         addToHistory(newObjects);
         setSelectedIds(newSelection);
         showNotification(language === 'en' ? "Objects ungrouped" : "Objetos desagrupados");
@@ -1500,8 +1659,8 @@ export default function App() {
                 accept=".obj,.stl,.glb,.gltf,.3dm" 
                 style={{display:'none'}} 
             />
-            <input type="file" ref={projectLoadRef} onChange={handleLoadProject} accept=".json" style={{ display: 'none' }} />
-            <input type="file" ref={projectImportRef} onChange={handleInsertProject} accept=".json" style={{ display: 'none' }} />
+            <input type="file" ref={projectLoadRef} onChange={handleLoadProject} accept=".json,.drawonshape.json" style={{ display: 'none' }} />
+            <input type="file" ref={projectImportRef} onChange={handleInsertProject} accept=".json,.drawonshape.json" style={{ display: 'none' }} />
 
             {/* TOAST NOTIFICATION POPUP */}
             {toastMessage && (
@@ -1591,9 +1750,9 @@ export default function App() {
                             <button onClick={() => { setIsMenuOpen(false); setShowProjectsModal(true); showNotification("Galería de proyectos cargada"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Save size={14} /> Mis Proyectos (Galería)</button>
                             <hr className="border-gray-100 my-1" />
                             <button onClick={handleNewProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.File size={14} /> Nuevo Proyecto</button>
-                            <button onClick={handleSaveProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Exportar Archivo JSON (Externo)</button>
-                            <button onClick={() => { projectLoadRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo JSON a abrir"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Abrir Archivo JSON</button>
-                            <button onClick={() => { projectImportRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo JSON a insertar"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Add size={14} /> Insertar Archivo JSON</button>
+                            <button onClick={handleSaveProject} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Exportar Proyecto (.drawonshape.json)</button>
+                            <button onClick={() => { projectLoadRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo de proyecto a abrir"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Abrir Proyecto (.drawonshape.json)</button>
+                            <button onClick={() => { projectImportRef.current?.click(); setIsMenuOpen(false); showNotification("Selecciona archivo a insertar"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Add size={14} /> Insertar en Escena (.json)</button>
                             <hr className="border-gray-100 my-1" />
                             <button onClick={() => { setIsMenuOpen(false); handleExportSnapshot(); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Exportar Imagen (PNG / JPG)</button>
                             <button onClick={() => handleExport('stl')} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Export size={14} /> Exportar STL (Mesh)</button>
@@ -1660,13 +1819,14 @@ export default function App() {
                                         ))}
                                     </div>
                                     <div className="flex items-center gap-1.5 px-1 pt-1.5 border-t border-gray-100">
-                                        <input 
-                                            type="color" 
-                                            value={backgroundColor} 
-                                            onChange={(e) => setBackgroundColor(e.target.value)} 
-                                            className="w-5 h-5 rounded border-0 cursor-pointer p-0"
-                                        />
-                                        <span className="text-[11px] font-mono text-gray-600 uppercase">{backgroundColor}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setIsBgMenuOpen(false); setIsBgColorPickerOpen(true); }}
+                                            className="flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-xs w-full transition-colors"
+                                        >
+                                            <div className="w-4 h-4 rounded-full border border-gray-300 shrink-0 shadow-2xs" style={{ backgroundColor }} />
+                                            <span className="text-[11px] font-mono text-gray-700 uppercase">{backgroundColor}</span>
+                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -1677,33 +1837,52 @@ export default function App() {
             </div>
 
             {showUI && (
-                <div className="absolute left-4 top-28 bottom-32 w-64 z-10 pointer-events-none animate-in slide-in-from-left-4 duration-300">
-                    <div className="bg-white/95 backdrop-blur border border-gray-200 rounded-2xl h-full shadow-xl overflow-hidden pointer-events-auto">
-                        <LayersPanel 
-                            layers={layers} 
-                            objects={sceneObjects} 
-                            activeLayerId={activeLayerId} 
-                            areGeometryLayersVisible={areGeometryVisible} 
-                            onToggleGlobalGeometry={() => setAreGeometryVisible(!areGeometryVisible)} 
-                            onLayerSelect={setActiveLayerId} 
-                            onToggleVisibility={id => setLayers(layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l))} 
-                            onToggleLock={id => setLayers(layers.map(l => l.id === id ? { ...l, locked: !l.locked } : l))} 
-                            onAddLayer={t => { const n:Layer = {id:generateId(), name:`Layer ${layers.length+1}`, visible:true, locked:false, type:t}; setLayers([n, ...layers]); setActiveLayerId(n.id); }} 
-                            onDeleteLayer={id => { if (layers.length > 1) { setLayers(layers.filter(l => l.id !== id)); addToHistory(sceneObjects.filter(o => o.layerId !== id)); if (activeLayerId === id) setActiveLayerId(layers[0].id); } }} 
-                            onRenameLayer={(id, n) => setLayers(layers.map(l => l.id === id ? { ...l, name: n } : l))} 
-                            onDeleteObject={id => addToHistory(sceneObjects.filter(o => o.id !== id))} 
-                            onSelectObject={id => { setSelectedIds([id]); handleToolChange('select'); }} 
-                            onToggleObjectVisibility={id => setSceneObjects(sceneObjects.map(o => o.id === id ? {...o, visible: o.visible===false} : o))} 
-                            selectedIds={selectedIds} 
-                            onMoveObjectsToLayer={handleMoveObjectsToLayer}
-                        />
+                isLayersPanelCollapsed ? (
+                    <div className="absolute left-4 top-28 z-10 animate-in fade-in duration-200 pointer-events-none">
+                        <button
+                            onClick={() => setIsLayersPanelCollapsed(false)}
+                            className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 text-gray-700 p-2.5 rounded-2xl shadow-xl hover:bg-gray-50 flex items-center gap-1.5 group transition-all"
+                            title={language === 'en' ? "Show Layers" : "Mostrar Capas"}
+                        >
+                            <LayersIcon size={20} className="text-gray-700 group-hover:text-blue-600 transition-colors" />
+                            <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
+                        </button>
                     </div>
-                </div>
+                ) : (
+                    <div className="absolute left-4 top-28 bottom-32 w-64 z-10 pointer-events-none animate-in slide-in-from-left-4 duration-300">
+                        <div className="bg-white/95 backdrop-blur border border-gray-200 rounded-2xl h-full shadow-xl overflow-hidden pointer-events-auto">
+                            <LayersPanel 
+                                layers={layers} 
+                                objects={sceneObjects} 
+                                activeLayerId={activeLayerId} 
+                                areGeometryLayersVisible={areGeometryVisible} 
+                                onToggleGlobalGeometry={() => setAreGeometryVisible(!areGeometryVisible)} 
+                                onLayerSelect={setActiveLayerId} 
+                                onToggleVisibility={id => setLayers(layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l))} 
+                                onToggleLock={id => setLayers(layers.map(l => l.id === id ? { ...l, locked: !l.locked } : l))} 
+                                onAddLayer={t => { const n:Layer = {id:generateId(), name:`Layer ${layers.length+1}`, visible:true, locked:false, type:t}; setLayers([n, ...layers]); setActiveLayerId(n.id); }} 
+                                onDeleteLayer={id => { if (layers.length > 1) { setLayers(layers.filter(l => l.id !== id)); addToHistory(sceneObjects.filter(o => o.layerId !== id)); if (activeLayerId === id) setActiveLayerId(layers[0].id); } }} 
+                                onRenameLayer={(id, n) => setLayers(layers.map(l => l.id === id ? { ...l, name: n } : l))} 
+                                onDeleteObject={id => addToHistory(sceneObjects.filter(o => o.id !== id))} 
+                                onSelectObject={id => { setSelectedIds([id]); handleToolChange('select'); }} 
+                                onToggleObjectVisibility={id => setSceneObjects(sceneObjects.map(o => o.id === id ? {...o, visible: o.visible===false} : o))} 
+                                selectedIds={selectedIds} 
+                                onMoveObjectsToLayer={handleMoveObjectsToLayer}
+                                onCollapse={() => setIsLayersPanelCollapsed(true)}
+                            />
+                        </div>
+                    </div>
+                )
             )}
 
             <div className="absolute inset-0 z-0">
                 <SceneCanvas 
-                    objects={sceneObjects} visibleLayerIds={layers.filter(l => l.visible).map(l => l.id)} selectedIds={selectedIds} lockedLayerIds={layers.filter(l => l.locked).map(l => l.id)} onSelect={handleObjectSelect} onLassoSelect={(ids) => { setSelectedIds(ids); handleToolChange('select'); }} 
+                    objects={sceneObjects} visibleLayerIds={layers.filter(l => l.visible).map(l => l.id)} selectedIds={selectedIds} lockedLayerIds={layers.filter(l => l.locked).map(l => l.id)} onSelect={handleObjectSelect} onLassoSelect={(ids) => { 
+                        const currentObjs = sceneObjectsRef.current;
+                        const rootIds = Array.from(new Set(ids.map(id => getRootParentId(id, currentObjs))));
+                        setSelectedIds(rootIds); 
+                        handleToolChange('select'); 
+                    }} 
                     onTransform={(id, u) => { 
                         if (id === 'symmetry-plane') { 
                             setSymmetryPosition(u.position as Vector3); 
@@ -1765,10 +1944,10 @@ export default function App() {
                                  <button 
                                      onClick={handleSaveSelectionAsComponent} 
                                      className="px-3.5 py-1.5 rounded-full hover:bg-indigo-50 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                                     title="Guardar como componente reusable en la biblioteca"
+                                     title={language === 'en' ? "Save selection as User Object in library" : "Guardar como User Object reusable en la biblioteca"}
                                  >
                                      <Icons.Package size={14} /> 
-                                     <span>Guardar Componente</span>
+                                     <span>Guardar User Object</span>
                                  </button>
                             </div>
                         )}
@@ -2005,6 +2184,15 @@ export default function App() {
                     setIsGridVisible(true);
                     showNotification(language === 'en' ? "New project started" : "Nuevo proyecto iniciado");
                 }}
+            />
+
+            {/* BACKGROUND COLOR PICKER MODAL */}
+            <ColorPickerModal
+                isOpen={isBgColorPickerOpen}
+                color={backgroundColor}
+                onChange={setBackgroundColor}
+                onClose={() => setIsBgColorPickerOpen(false)}
+                title={language === 'en' ? "Background Color" : "Color de Fondo"}
             />
 
             {/* EXPORT PNG / JPG MODAL */}

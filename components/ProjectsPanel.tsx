@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SceneObject, Layer, Project, SceneComponent } from '../types';
 import { Icons } from './IconComponents';
-import { ChevronDown, Package, Library, Upload, Plus, Download, Trash2, FolderPlus } from 'lucide-react';
+import { ChevronDown, Package, Library, Upload, Plus, Download, Trash2, FolderPlus, Hand, Undo2, RotateCw, PenTool, Eye, SlidersHorizontal } from 'lucide-react';
 import { v4 as generateId } from 'uuid';
 import { Language, getTranslation } from '../utils/translations';
+import { saveOrShareFile } from '../utils/downloadHelper';
 
 interface ProjectsPanelProps {
     isOpen: boolean;
@@ -142,7 +143,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
         const file = e.target.files?.[0];
         if (file && onImportComponent) {
             onImportComponent(file);
-            showToast(isEn ? `Component imported: ${file.name}` : `Componente importado: ${file.name}`);
+            showToast(isEn ? `User Object imported: ${file.name}` : `User Object importado: ${file.name}`);
         }
         if (e.target) e.target.value = '';
     };
@@ -164,13 +165,13 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                     <div>
                         <div className="flex items-center gap-2">
                             <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">
-                                {panelTab === 'projects' ? t('savedProjects') : (isEn ? 'Component Library' : 'Biblioteca de Componentes')}
+                                {panelTab === 'projects' ? t('savedProjects') : (isEn ? 'User Objects Library' : 'Biblioteca de User Objects')}
                             </h1>
                         </div>
                         <p className="text-xs text-gray-500 font-medium">
                             {panelTab === 'projects' 
                                 ? t('internalStorageDesc') 
-                                : (isEn ? 'Reusable external 3D elements (chairs, tables, fixtures) across all projects' : 'Elementos y grupos reutilizables entre múltiples proyectos')}
+                                : (isEn ? 'Reusable external 3D User Objects (chairs, tables, fixtures) across all projects' : 'User Objects 3D reutilizables entre múltiples proyectos')}
                         </p>
                     </div>
                 </div>
@@ -198,7 +199,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                             }`}
                         >
                             <Package size={14} />
-                            <span>{isEn ? 'Components' : 'Componentes'}</span>
+                            <span>User Objects</span>
                             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-600 font-mono">
                                 {components.length}
                             </span>
@@ -263,7 +264,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                         </>
                     ) : (
                         <div className="flex items-center gap-2">
-                            {/* Guardar Selección como Componente */}
+                            {/* Guardar Selección como User Object */}
                             <button
                                 onClick={() => {
                                     if (onSaveSelectionAsComponent) {
@@ -276,13 +277,13 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                         ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
                                         : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                                 }`}
-                                title={selectedCount > 0 ? `Guardar selección (${selectedCount} obj) como componente` : "Selecciona objetos en la escena"}
+                                title={selectedCount > 0 ? (isEn ? `Save selection (${selectedCount} obj) as User Object` : `Guardar selección (${selectedCount} obj) como User Object`) : (isEn ? "Select objects in the scene" : "Selecciona objetos en la escena")}
                             >
                                 <FolderPlus size={15} />
-                                <span>{isEn ? 'Save Selection as Component' : 'Guardar Selección como Componente'}</span>
+                                <span>{isEn ? 'Save as User Object' : 'Guardar como User Object'}</span>
                             </button>
 
-                            {/* Importar Componente (.json) */}
+                            {/* Importar User Object (.json) */}
                             <input 
                                 ref={componentFileInputRef}
                                 type="file" 
@@ -293,7 +294,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                             <button
                                 onClick={() => componentFileInputRef.current?.click()}
                                 className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-colors border border-gray-200"
-                                title="Importar archivo .json de componente"
+                                title={isEn ? "Import User Object .json file" : "Importar archivo .json de User Object"}
                             >
                                 <Upload size={14} />
                                 <span>{isEn ? 'Import' : 'Importar .json'}</span>
@@ -323,7 +324,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                 >
                                     <div className="flex items-center gap-3">
                                         <div className="w-8 h-8 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-sm border border-amber-100/80">
-                                            👆
+                                            <Hand size={16} />
                                         </div>
                                         <div>
                                             <div className="flex items-center gap-2">
@@ -352,7 +353,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             {/* 1 Finger Double Tap: Canonical Orthographic Views */}
                                             <div className="p-3.5 bg-white rounded-2xl border border-gray-200/90 shadow-2xs flex items-start gap-3">
                                                 <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold text-xs shrink-0 border border-amber-100">
-                                                    👆×2
+                                                    <span className="font-mono text-xs font-bold">2×</span>
                                                 </div>
                                                 <div>
                                                     <h4 className="text-xs font-bold text-gray-900">
@@ -372,7 +373,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             {/* 3 Fingers Drag: Camera Lens / FOV */}
                                             <div className="p-3.5 bg-white rounded-2xl border border-gray-200/90 shadow-2xs flex items-start gap-3">
                                                 <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-xs shrink-0 border border-purple-100">
-                                                    🖐️↕️
+                                                    <Eye size={16} />
                                                 </div>
                                                 <div>
                                                     <h4 className="text-xs font-bold text-gray-900">
@@ -392,7 +393,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             {/* UI Arrow Buttons: Undo / Redo */}
                                             <div className="p-3.5 bg-white rounded-2xl border border-gray-200/90 shadow-2xs flex items-start gap-3">
                                                 <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0 border border-blue-100">
-                                                    ↩️↪️
+                                                    <Undo2 size={16} />
                                                 </div>
                                                 <div>
                                                     <h4 className="text-xs font-bold text-gray-900">
@@ -403,8 +404,8 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                                     </div>
                                                     <p className="text-[11px] text-gray-500 leading-snug">
                                                         {isEn 
-                                                            ? 'To prevent accidental touch triggers, undo & redo are controlled strictly through the interface arrow buttons (up to 12 steps).' 
-                                                            : 'Para evitar toques accidentales de los dedos, deshacer y rehacer se activan exclusivamente desde las flechas de la interfaz (máximo 12 pasos).'}
+                                                            ? 'To prevent accidental touch triggers, undo & redo are controlled strictly through the interface arrow buttons (up to 20 steps).' 
+                                                            : 'Para evitar toques accidentales de los dedos, deshacer y rehacer se activan exclusivamente desde las flechas de la interfaz (máximo 20 pasos).'}
                                                     </p>
                                                 </div>
                                             </div>
@@ -412,7 +413,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             {/* Finger Orbiting */}
                                             <div className="p-3.5 bg-white rounded-2xl border border-gray-200/90 shadow-2xs flex items-start gap-3">
                                                 <div className="w-8 h-8 rounded-xl bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-xs shrink-0 border border-gray-200">
-                                                    👆🔄
+                                                    <RotateCw size={16} />
                                                 </div>
                                                 <div>
                                                     <h4 className="text-xs font-bold text-gray-900">
@@ -432,7 +433,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             {/* Stylus / Pen */}
                                             <div className="p-3.5 bg-white rounded-2xl border border-gray-200/90 shadow-2xs flex items-start gap-3">
                                                 <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center font-bold text-xs shrink-0 border border-rose-100">
-                                                    ✏️✨
+                                                    <PenTool size={16} />
                                                 </div>
                                                 <div>
                                                     <h4 className="text-xs font-bold text-gray-900">
@@ -558,6 +559,18 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
 
                                                     <div className="flex items-center gap-1">
                                                         <button 
+                                                            onClick={async () => {
+                                                                const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+                                                                const safeName = project.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                                                                await saveOrShareFile(blob, `${safeName}.drawonshape.json`, 'application/json');
+                                                            }}
+                                                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                                                            title={isEn ? "Export (.drawonshape.json)" : "Exportar (.drawonshape.json)"}
+                                                        >
+                                                            <Download size={14} />
+                                                        </button>
+
+                                                        <button 
                                                             onClick={() => handleStartRename(project)}
                                                             className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
                                                             title={t('rename')}
@@ -581,12 +594,12 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                             )}
                         </>
                     ) : (
-                        /* Component Library Grid */
+                        /* User Objects Library Grid */
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                                        {isEn ? 'Saved Components' : 'Componentes Guardados'} ({components.length})
+                                        {isEn ? 'Saved User Objects' : 'User Objects Guardados'} ({components.length})
                                     </h2>
                                 </div>
                             </div>
@@ -598,12 +611,12 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                     </div>
                                     <div className="space-y-1">
                                         <h3 className="text-base font-bold text-gray-800">
-                                            {isEn ? 'No components in library' : 'No hay componentes en la biblioteca'}
+                                            {isEn ? 'No User Objects in library' : 'No hay User Objects en la biblioteca'}
                                         </h3>
                                         <p className="text-xs text-gray-400 max-w-sm mx-auto">
                                             {isEn 
-                                                ? 'Select a group or objects in your scene (such as a chair, table, or fixture) and save it to reuse across any project.' 
-                                                : 'Selecciona un grupo o figuras en tu escena (por ejemplo una silla, mesa o lámpara) y guárdalo como componente para reutilizarlo cuando quieras.'}
+                                                ? 'Select a group or objects in your scene (such as a chair, table, or fixture) and save it as a User Object to reuse across any project.' 
+                                                : 'Selecciona un grupo o figuras en tu escena (por ejemplo una silla, mesa o lámpara) y guárdalo como User Object para reutilizarlo cuando quieras.'}
                                         </p>
                                     </div>
                                 </div>
@@ -642,10 +655,10 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                                         }
                                                     }}
                                                     className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                                                    title="Insertar este componente en la escena actual"
+                                                    title={isEn ? "Insert this User Object into the current scene" : "Insertar este User Object en la escena actual"}
                                                 >
                                                     <Plus size={14} />
-                                                    <span>{isEn ? 'Insert in Scene' : 'Insertar en Escena'}</span>
+                                                    <span>{isEn ? 'Insert User Object' : 'Insertar User Object'}</span>
                                                 </button>
 
                                                 {onExportComponent && (
@@ -661,7 +674,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                                 {onDeleteComponent && (
                                                     <button
                                                         onClick={() => {
-                                                            if (window.confirm(isEn ? `Delete component "${comp.name}"?` : `¿Eliminar el componente "${comp.name}"?`)) {
+                                                            if (window.confirm(isEn ? `Delete User Object "${comp.name}"?` : `¿Eliminar el User Object "${comp.name}"?`)) {
                                                                 onDeleteComponent(comp.id);
                                                             }
                                                         }}

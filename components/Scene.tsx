@@ -1077,11 +1077,10 @@ const smoothVector3Points = (points: THREE.Vector3[], iterations: number = 2): T
 // Gesture Handler Component
 const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
     const { gl } = useThree();
-    const lastOneFingerTap = useRef(0);
-    const oneFingerTimer = useRef<any>(null);
     const threeFingerStart = useRef<number | null>(null);
-    const twoFingerStartTime = useRef<number>(0);
-    const twoFingerStartPos = useRef<{ x: number; y: number }[]>([]);
+    const tapCandidate = useRef<{ time: number; x: number; y: number; moved: boolean } | null>(null);
+    const lastTapTime = useRef<number>(0);
+    const lastTapPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     
     useEffect(() => {
         const el = gl.domElement;
@@ -1090,33 +1089,32 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
             const touchCount = e.touches.length;
 
             if (touchCount === 1) {
-                // 1-finger double tap candidate
-                const now = Date.now();
-                if (now - lastOneFingerTap.current < 350) {
-                    onSnapView();
-                    lastOneFingerTap.current = 0;
-                } else {
-                    lastOneFingerTap.current = now;
+                // Potential 1-finger tap candidate
+                const touch = e.touches[0];
+                tapCandidate.current = {
+                    time: Date.now(),
+                    x: touch.clientX,
+                    y: touch.clientY,
+                    moved: false
+                };
+            } else {
+                // Multi-touch cancel single-finger tap
+                tapCandidate.current = null;
+                if (touchCount === 3) {
+                    if (controlsRef?.current) controlsRef.current.enabled = false;
+                    threeFingerStart.current = e.touches[0].clientY;
                 }
-            } else if (touchCount === 2) {
-                // 2-finger tap candidate to snap camera to closest canonical orthogonal view
-                lastOneFingerTap.current = 0;
-                twoFingerStartTime.current = Date.now();
-                twoFingerStartPos.current = [
-                    { x: e.touches[0].clientX, y: e.touches[0].clientY },
-                    { x: e.touches[1].clientX, y: e.touches[1].clientY }
-                ];
-            } else if (touchCount === 3) {
-                // 3-finger vertical drag candidate for lens focal length (fuga / FOV)
-                lastOneFingerTap.current = 0;
-                twoFingerStartTime.current = 0;
-                if (controlsRef?.current) controlsRef.current.enabled = false;
-                threeFingerStart.current = e.touches[0].clientY;
             }
         };
         
         const handleTouchMove = (e: TouchEvent) => {
-            if (e.touches.length === 3 && threeFingerStart.current !== null) {
+            if (e.touches.length === 1 && tapCandidate.current) {
+                const touch = e.touches[0];
+                const dist = Math.hypot(touch.clientX - tapCandidate.current.x, touch.clientY - tapCandidate.current.y);
+                if (dist > 15) {
+                    tapCandidate.current.moved = true;
+                }
+            } else if (e.touches.length === 3 && threeFingerStart.current !== null) {
                 e.preventDefault();
                 e.stopPropagation(); // Consume event for FOV / lens adjustment
                 const delta = threeFingerStart.current - e.touches[0].clientY;
@@ -1126,25 +1124,36 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
         };
         
         const handleTouchEnd = (e: TouchEvent) => {
-            // Check for 2-finger tap completion
-            if (twoFingerStartTime.current > 0) {
-                const duration = Date.now() - twoFingerStartTime.current;
-                twoFingerStartTime.current = 0;
-                // If it was a quick tap (< 350ms) and fingers didn't move far (< 35px)
-                if (duration < 350 && twoFingerStartPos.current.length === 2 && e.changedTouches.length > 0) {
-                    let maxDist = 0;
-                    for (let i = 0; i < e.changedTouches.length; i++) {
-                        const ct = e.changedTouches[i];
-                        const orig = twoFingerStartPos.current[i] || twoFingerStartPos.current[0];
-                        const dist = Math.hypot(ct.clientX - orig.x, ct.clientY - orig.y);
-                        maxDist = Math.max(maxDist, dist);
-                    }
-                    if (maxDist < 35) {
+            if (tapCandidate.current && !tapCandidate.current.moved) {
+                const now = Date.now();
+                const duration = now - tapCandidate.current.time;
+                // A valid tap must be quick (< 260ms) with minimal movement (< 15px)
+                if (duration < 260) {
+                    const tapX = tapCandidate.current.x;
+                    const tapY = tapCandidate.current.y;
+                    const timeSinceLastTap = now - lastTapTime.current;
+                    const distFromLastTap = Math.hypot(tapX - lastTapPos.current.x, tapY - lastTapPos.current.y);
+
+                    // If within 350ms of previous tap and close by (< 30px) -> Double Tap!
+                    if (timeSinceLastTap < 350 && distFromLastTap < 30) {
                         onSnapView();
+                        lastTapTime.current = 0;
+                    } else {
+                        lastTapTime.current = now;
+                        lastTapPos.current = { x: tapX, y: tapY };
                     }
                 }
             }
+            tapCandidate.current = null;
 
+            if (threeFingerStart.current !== null && e.touches.length < 3) {
+                threeFingerStart.current = null;
+                if (controlsRef?.current) controlsRef.current.enabled = true;
+            }
+        };
+
+        const handleTouchCancel = () => {
+            tapCandidate.current = null;
             if (threeFingerStart.current !== null) {
                 threeFingerStart.current = null;
                 if (controlsRef?.current) controlsRef.current.enabled = true;
@@ -1154,14 +1163,13 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
         el.addEventListener('touchstart', handleTouchStart, { passive: false });
         el.addEventListener('touchmove', handleTouchMove, { passive: false });
         el.addEventListener('touchend', handleTouchEnd);
-        el.addEventListener('touchcancel', handleTouchEnd);
+        el.addEventListener('touchcancel', handleTouchCancel);
         
         return () => {
-            if (oneFingerTimer.current) clearTimeout(oneFingerTimer.current);
             el.removeEventListener('touchstart', handleTouchStart);
             el.removeEventListener('touchmove', handleTouchMove);
             el.removeEventListener('touchend', handleTouchEnd);
-            el.removeEventListener('touchcancel', handleTouchEnd);
+            el.removeEventListener('touchcancel', handleTouchCancel);
             if (controlsRef?.current) controlsRef.current.enabled = true;
         };
     }, [onSnapView, onAdjustFOV, gl, controlsRef]);
@@ -1300,7 +1308,7 @@ const SceneContent = ({
     const initialMultiPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
 
     useEffect(() => {
-        if (multiProxyMeshRef.current && multiCentroid) {
+        if (multiProxyMeshRef.current && multiCentroid && !isTransformingRef.current) {
             multiProxyMeshRef.current.position.copy(multiCentroid);
         }
     }, [multiCentroid]);
@@ -1331,8 +1339,8 @@ const SceneContent = ({
         const dir = relPos.clone().normalize();
         
         const views = [
-            { name: 'Vista Superior (Top)', dir: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(0, dist, 0.0001), up: new THREE.Vector3(0, 0, -1) },
-            { name: 'Vista Inferior (Bottom)', dir: new THREE.Vector3(0, -1, 0), pos: new THREE.Vector3(0, -dist, 0.0001), up: new THREE.Vector3(0, 0, 1) },
+            { name: 'Vista Superior (Top)', dir: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(0, dist, 0.001), up: new THREE.Vector3(0, 1, 0) },
+            { name: 'Vista Inferior (Bottom)', dir: new THREE.Vector3(0, -1, 0), pos: new THREE.Vector3(0, -dist, -0.001), up: new THREE.Vector3(0, 1, 0) },
             { name: 'Vista Frontal (Front)', dir: new THREE.Vector3(0, 0, 1), pos: new THREE.Vector3(0, 0, dist), up: new THREE.Vector3(0, 1, 0) },
             { name: 'Vista Posterior (Back)', dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 0, -dist), up: new THREE.Vector3(0, 1, 0) },
             { name: 'Vista Derecha (Right)', dir: new THREE.Vector3(1, 0, 0), pos: new THREE.Vector3(dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
@@ -1350,7 +1358,8 @@ const SceneContent = ({
         });
         
         const destPos = target.clone().add(bestView.pos);
-        camera.up.copy(bestView.up);
+        camera.up.set(0, 1, 0);
+        if (controls.object) controls.object.up.set(0, 1, 0);
 
         const visibleHeight = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cameraFov / 2));
         const matchingZoom = gl.domElement.clientHeight / Math.max(visibleHeight, 0.1);
@@ -1534,7 +1543,6 @@ const SceneContent = ({
         };
 
         const onDown = (e: PointerEvent) => {
-            if (e.pointerType === 'touch') return; // Touch navigates camera
             if (e.button !== 0) return;
 
             if (controlsRef.current) controlsRef.current.enabled = false;
@@ -1546,7 +1554,6 @@ const SceneContent = ({
 
         const onMove = (e: PointerEvent) => {
             if (!isDrawing.current) return;
-            if (e.pointerType === 'touch') return;
 
             const pt = getRayPoint(e.clientX, e.clientY);
             const lastP = currentPoints.current[currentPoints.current.length - 1];
@@ -1604,7 +1611,9 @@ const SceneContent = ({
         };
     }, [activeTool, camera, gl, onStrokeComplete, currentBrushSmoothing]);
 
-    // --- DEDICATED LASSO SELECTION LISTENER (Draws anywhere on screen) ---
+    // --- DEDICATED CAD WINDOW / CROSSING BOX SELECTION LISTENER ---
+    const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+
     useEffect(() => {
         if (activeTool !== 'lasso') return;
 
@@ -1613,45 +1622,55 @@ const SceneContent = ({
         dom.style.cursor = 'crosshair';
 
         const onDown = (e: PointerEvent) => {
-            if (e.pointerType === 'touch') return;
             if (e.button !== 0) return;
 
             if (controlsRef.current) controlsRef.current.enabled = false;
             isLassoing.current = true;
+            selectionStartRef.current = { x: e.clientX, y: e.clientY };
             const pt = { x: e.clientX, y: e.clientY };
-            setLassoPoints([pt]);
-            if (onLassoPointsChange) onLassoPointsChange([pt]);
+            setLassoPoints([pt, pt, pt, pt]);
+            if (onLassoPointsChange) onLassoPointsChange([pt, pt, pt, pt]);
         };
 
         const onMove = (e: PointerEvent) => {
-            if (!isLassoing.current) return;
-            if (e.pointerType === 'touch') return;
+            if (!isLassoing.current || !selectionStartRef.current) return;
 
-            const pt = { x: e.clientX, y: e.clientY };
-            setLassoPoints(prev => {
-                const updated = [...prev, pt];
-                if (onLassoPointsChange) onLassoPointsChange(updated);
-                return updated;
-            });
+            const start = selectionStartRef.current;
+            const current = { x: e.clientX, y: e.clientY };
+            // Rectangular CAD selection box: Top-Left, Top-Right, Bottom-Right, Bottom-Left
+            const pts = [
+                { x: start.x, y: start.y },
+                { x: current.x, y: start.y },
+                { x: current.x, y: current.y },
+                { x: start.x, y: current.y }
+            ];
+            setLassoPoints(pts);
+            if (onLassoPointsChange) onLassoPointsChange(pts);
         };
 
         const onUp = (e: PointerEvent) => {
-            if (!isLassoing.current) return;
+            if (!isLassoing.current || !selectionStartRef.current) return;
             isLassoing.current = false;
             if (controlsRef.current) controlsRef.current.enabled = true;
 
-            const rect = dom.getBoundingClientRect();
-            const isPointInLasso = (screenX: number, screenY: number, pts: { x: number; y: number }[]) => {
-                let inside = false;
-                for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-                    const xi = pts[i].x, yi = pts[i].y;
-                    const xj = pts[j].x, yj = pts[j].y;
-                    const intersect = ((yi > screenY) !== (yj > screenY)) && (screenX < (xj - xi) * (screenY - yi) / (yj - yi) + xi);
-                    if (intersect) inside = !inside;
-                }
-                return inside;
-            };
+            const start = selectionStartRef.current;
+            const end = { x: e.clientX, y: e.clientY };
+            selectionStartRef.current = null;
 
+            const minX = Math.min(start.x, end.x);
+            const maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y);
+            const maxY = Math.max(start.y, end.y);
+            const isWindowSelection = end.x >= start.x; // Left to right = Window (dashed, strictly inside)
+
+            // Ignore tiny micro-clicks (< 5px)
+            if (maxX - minX < 5 && maxY - minY < 5) {
+                setLassoPoints([]);
+                if (onLassoPointsChange) onLassoPointsChange([]);
+                return;
+            }
+
+            const rect = dom.getBoundingClientRect();
             const toScreen = (worldPos: THREE.Vector3) => {
                 const p = worldPos.clone().project(camera);
                 return {
@@ -1661,35 +1680,81 @@ const SceneContent = ({
                 };
             };
 
-            setLassoPoints(currentLassoPts => {
-                if (currentLassoPts.length >= 3) {
-                    const selected: string[] = [];
-                    objects.forEach(obj => {
-                        if (!obj.visible) return;
+            const isPointInside = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
 
-                        if (obj.type === 'stroke' && obj.strokeData?.points) {
-                            const objPos = new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
-                            const hasPointInside = obj.strokeData.points.some(p => {
-                                const pt3d = new THREE.Vector3(p.x + objPos.x, p.y + objPos.y, p.z + objPos.z);
-                                const s = toScreen(pt3d);
-                                return s.inFrustum && isPointInLasso(s.x, s.y, currentLassoPts);
-                            });
-                            if (hasPointInside) selected.push(obj.id);
+            const selected: string[] = [];
+            objects.forEach(obj => {
+                if (!obj.visible) return;
+
+                if (obj.type === 'stroke' && obj.strokeData?.points) {
+                    const objPos = new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
+                    const sPoints = obj.strokeData.points.map(p => toScreen(new THREE.Vector3(p.x + objPos.x, p.y + objPos.y, p.z + objPos.z)));
+                    if (sPoints.length === 0) return;
+
+                    if (isWindowSelection) {
+                        // Left to right: ALL points must be strictly inside the window
+                        if (sPoints.every(s => s.inFrustum && isPointInside(s.x, s.y))) {
+                            selected.push(obj.id);
+                        }
+                    } else {
+                        // Right to left: ANY point inside OR bounding box overlaps
+                        const anyInside = sPoints.some(s => s.inFrustum && isPointInside(s.x, s.y));
+                        if (anyInside) {
+                            selected.push(obj.id);
                         } else {
-                            const centerWorld = new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
-                            const sCenter = toScreen(centerWorld);
-                            if (sCenter.inFrustum && isPointInLasso(sCenter.x, sCenter.y, currentLassoPts)) {
+                            const strokeMinX = Math.min(...sPoints.map(p => p.x));
+                            const strokeMaxX = Math.max(...sPoints.map(p => p.x));
+                            const strokeMinY = Math.min(...sPoints.map(p => p.y));
+                            const strokeMaxY = Math.max(...sPoints.map(p => p.y));
+                            if (strokeMinX <= maxX && strokeMaxX >= minX && strokeMinY <= maxY && strokeMaxY >= minY) {
                                 selected.push(obj.id);
                             }
                         }
-                    });
-                    if (selected.length > 0) {
-                        onLassoSelect(selected);
+                    }
+                } else {
+                    const objPos = new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
+                    const hx = (obj.params?.width || obj.scale.x || 1) * 0.5;
+                    const hy = (obj.params?.height || obj.scale.y || 1) * 0.5;
+                    const hz = (obj.params?.depth || obj.scale.z || 1) * 0.5;
+                    const corners = [
+                        toScreen(new THREE.Vector3(objPos.x - hx, objPos.y - hy, objPos.z - hz)),
+                        toScreen(new THREE.Vector3(objPos.x + hx, objPos.y - hy, objPos.z - hz)),
+                        toScreen(new THREE.Vector3(objPos.x - hx, objPos.y + hy, objPos.z - hz)),
+                        toScreen(new THREE.Vector3(objPos.x + hx, objPos.y + hy, objPos.z - hz)),
+                        toScreen(new THREE.Vector3(objPos.x - hx, objPos.y - hy, objPos.z + hz)),
+                        toScreen(new THREE.Vector3(objPos.x + hx, objPos.y - hy, objPos.z + hz)),
+                        toScreen(new THREE.Vector3(objPos.x - hx, objPos.y + hy, objPos.z + hz)),
+                        toScreen(new THREE.Vector3(objPos.x + hx, objPos.y + hy, objPos.z + hz))
+                    ];
+                    const sCenter = toScreen(objPos);
+
+                    if (isWindowSelection) {
+                        // Window: ALL 8 corners must be strictly inside
+                        if (corners.every(c => c.inFrustum && isPointInside(c.x, c.y))) {
+                            selected.push(obj.id);
+                        }
+                    } else {
+                        // Crossing: ANY corner, center inside or bounding box overlaps
+                        const anyCorner = corners.some(c => c.inFrustum && isPointInside(c.x, c.y));
+                        const centerIn = sCenter.inFrustum && isPointInside(sCenter.x, sCenter.y);
+                        const oMinX = Math.min(...corners.map(c => c.x));
+                        const oMaxX = Math.max(...corners.map(c => c.x));
+                        const oMinY = Math.min(...corners.map(c => c.y));
+                        const oMaxY = Math.max(...corners.map(c => c.y));
+                        const bboxOverlaps = oMinX <= maxX && oMaxX >= minX && oMinY <= maxY && oMaxY >= minY;
+
+                        if (anyCorner || centerIn || bboxOverlaps) {
+                            selected.push(obj.id);
+                        }
                     }
                 }
-                if (onLassoPointsChange) onLassoPointsChange([]);
-                return [];
             });
+
+            if (selected.length > 0) {
+                onLassoSelect(selected);
+            }
+            setLassoPoints([]);
+            if (onLassoPointsChange) onLassoPointsChange([]);
         };
 
         dom.addEventListener('pointerdown', onDown);
@@ -2122,16 +2187,28 @@ const SceneContent = ({
                         }}
                         onMouseUp={() => {
                             isTransformingRef.current = false;
+                            initialCentroidRef.current = null;
+                            initialMultiPositionsRef.current.clear();
                             onTransformEnd();
                         }}
                         onChange={() => {
-                            if (multiProxyMeshRef.current && initialCentroidRef.current && onTransformMultiple) {
+                            if (multiProxyMeshRef.current && onTransformMultiple) {
+                                if (!initialCentroidRef.current) {
+                                    initialCentroidRef.current = multiProxyMeshRef.current.position.clone();
+                                    const map = new Map<string, { x: number; y: number; z: number }>();
+                                    selectedIds.forEach(id => {
+                                        const obj = objects.find(o => o.id === id);
+                                        if (obj && obj.position) map.set(id, { ...obj.position });
+                                    });
+                                    initialMultiPositionsRef.current = map;
+                                }
                                 const cur = multiProxyMeshRef.current.position;
                                 const dx = cur.x - initialCentroidRef.current.x;
                                 const dy = cur.y - initialCentroidRef.current.y;
                                 const dz = cur.z - initialCentroidRef.current.z;
                                 const updates = selectedIds.map(id => {
-                                    const init = initialMultiPositionsRef.current.get(id) || { x: 0, y: 0, z: 0 };
+                                    const obj = objects.find(o => o.id === id);
+                                    const init = initialMultiPositionsRef.current.get(id) || (obj?.position ? { ...obj.position } : { x: 0, y: 0, z: 0 });
                                     return {
                                         id,
                                         updates: {
@@ -2218,23 +2295,23 @@ export const SceneCanvas = (props: SceneProps) => {
                 />
             </Canvas>
 
-            {/* LASSO 2D SCREEN OVERLAY */}
+            {/* CAD BOX SELECTION 2D SCREEN OVERLAY */}
             {props.activeTool === 'lasso' && screenLassoPoints.length > 1 && (
                 <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
                     <polygon
                         points={screenLassoPoints.map(p => `${p.x},${p.y}`).join(' ')}
-                        fill="rgba(59, 130, 246, 0.15)"
-                        stroke="#3b82f6"
+                        fill={screenLassoPoints[1] && screenLassoPoints[1].x >= screenLassoPoints[0].x ? "rgba(59, 130, 246, 0.12)" : "rgba(37, 99, 235, 0.22)"}
+                        stroke="#2563eb"
                         strokeWidth="2"
-                        strokeDasharray="4 3"
+                        strokeDasharray={screenLassoPoints[1] && screenLassoPoints[1].x >= screenLassoPoints[0].x ? "6 4" : "none"}
                     />
                 </svg>
             )}
 
             {/* CAMERA FOV / LENS FLOATING BADGE */}
             {fovBadgeText && (
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-black/75 backdrop-blur text-white px-4 py-1.5 rounded-full text-sm font-semibold tracking-wide shadow-lg border border-white/20 animate-in fade-in zoom-in-95 pointer-events-none">
-                    📷 {fovBadgeText}
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-black/75 backdrop-blur text-white px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide shadow-lg border border-white/20 animate-in fade-in zoom-in-95 pointer-events-none">
+                    {fovBadgeText}
                 </div>
             )}
         </div>

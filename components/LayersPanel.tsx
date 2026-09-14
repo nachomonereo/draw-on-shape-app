@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Icons } from './IconComponents';
 import { Layer, SceneObject } from '../types';
-import { ChevronRight, ChevronDown, FolderInput, Plus } from 'lucide-react';
+import { ChevronRight, ChevronDown, FolderInput, Plus, ChevronLeft } from 'lucide-react';
 
 interface LayersPanelProps {
     layers: Layer[];
@@ -20,13 +20,14 @@ interface LayersPanelProps {
     onToggleObjectVisibility: (id: string) => void;
     selectedIds?: string[];
     onMoveObjectsToLayer?: (objectIds: string[], targetLayerId: string) => void;
+    onCollapse?: () => void;
 }
 
 const LayersPanel: React.FC<LayersPanelProps> = ({ 
     layers, objects, activeLayerId, areGeometryLayersVisible, onToggleGlobalGeometry,
     onLayerSelect, onToggleVisibility, onToggleLock, onAddLayer, onDeleteLayer, onRenameLayer, 
     onDeleteObject, onSelectObject, onToggleObjectVisibility, selectedIds = [],
-    onMoveObjectsToLayer
+    onMoveObjectsToLayer, onCollapse
 }) => {
     // 2 Dedicated Tabs: 'geometry' and 'trace'
     const [activeTab, setActiveTab] = useState<'geometry' | 'trace'>('geometry');
@@ -68,36 +69,48 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         <div className="flex flex-col h-full text-black font-sans bg-white select-none">
             {/* Top 2 Tabs Header */}
             <div className="p-3 border-b border-gray-100 bg-white">
-                <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl mb-3">
-                    <button
-                        onClick={() => setActiveTab('geometry')}
-                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-                            activeTab === 'geometry'
-                                ? 'bg-white text-blue-600 shadow-xs'
-                                : 'text-gray-500 hover:text-gray-800'
-                        }`}
-                    >
-                        <Icons.Box size={14} />
-                        <span>Geometría</span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-500 font-mono">
-                            {geoCount}
-                        </span>
-                    </button>
+                <div className="flex items-center gap-1.5 mb-3">
+                    <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl flex-1">
+                        <button
+                            onClick={() => setActiveTab('geometry')}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                                activeTab === 'geometry'
+                                    ? 'bg-white text-blue-600 shadow-xs'
+                                    : 'text-gray-500 hover:text-gray-800'
+                            }`}
+                        >
+                            <Icons.Box size={14} />
+                            <span>Geometría</span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-500 font-mono">
+                                {geoCount}
+                            </span>
+                        </button>
 
-                    <button
-                        onClick={() => setActiveTab('trace')}
-                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-                            activeTab === 'trace'
-                                ? 'bg-white text-yellow-600 shadow-xs'
-                                : 'text-gray-500 hover:text-gray-800'
-                        }`}
-                    >
-                        <Icons.Brush size={14} />
-                        <span>Trazos</span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-yellow-50 text-yellow-600 font-mono">
-                            {traceCount}
-                        </span>
-                    </button>
+                        <button
+                            onClick={() => setActiveTab('trace')}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                                activeTab === 'trace'
+                                    ? 'bg-white text-yellow-600 shadow-xs'
+                                    : 'text-gray-500 hover:text-gray-800'
+                            }`}
+                        >
+                            <Icons.Brush size={14} />
+                            <span>Trazos</span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-yellow-50 text-yellow-600 font-mono">
+                                {traceCount}
+                            </span>
+                        </button>
+                    </div>
+
+                    {onCollapse && (
+                        <button
+                            onClick={onCollapse}
+                            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors shrink-0"
+                            title="Minimizar panel"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                    )}
                 </div>
 
                 {/* Sub-toolbar per Tab */}
