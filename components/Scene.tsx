@@ -1075,43 +1075,36 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
     const lastOneFingerTap = useRef(0);
     const oneFingerTimer = useRef<any>(null);
     const threeFingerStart = useRef<number | null>(null);
-    const maxTouches = useRef<number>(0);
+    const twoFingerStartTime = useRef<number>(0);
+    const twoFingerStartPos = useRef<{ x: number; y: number }[]>([]);
     
     useEffect(() => {
         const el = gl.domElement;
         
         const handleTouchStart = (e: TouchEvent) => {
             const touchCount = e.touches.length;
-            maxTouches.current = Math.max(maxTouches.current, touchCount);
-
-            // If 2 or more touches are detected, cancel any pending single-finger action immediately
-            if (touchCount >= 2) {
-                if (oneFingerTimer.current) {
-                    clearTimeout(oneFingerTimer.current);
-                    oneFingerTimer.current = null;
-                }
-                lastOneFingerTap.current = 0;
-            }
 
             if (touchCount === 1) {
-                // 1-finger double tap to snap camera to closest orthogonal view (Top, Bottom, Front, Back, Right, Left)
-                if (oneFingerTimer.current) {
-                    clearTimeout(oneFingerTimer.current);
+                // 1-finger double tap candidate
+                const now = Date.now();
+                if (now - lastOneFingerTap.current < 350) {
+                    onSnapView();
+                    lastOneFingerTap.current = 0;
+                } else {
+                    lastOneFingerTap.current = now;
                 }
-                oneFingerTimer.current = setTimeout(() => {
-                    oneFingerTimer.current = null;
-                    if (maxTouches.current === 1) {
-                        const now = Date.now();
-                        if (now - lastOneFingerTap.current < 350) {
-                            onSnapView();
-                            lastOneFingerTap.current = 0;
-                        } else {
-                            lastOneFingerTap.current = now;
-                        }
-                    }
-                }, 60);
+            } else if (touchCount === 2) {
+                // 2-finger tap candidate to snap camera to closest canonical orthogonal view
+                lastOneFingerTap.current = 0;
+                twoFingerStartTime.current = Date.now();
+                twoFingerStartPos.current = [
+                    { x: e.touches[0].clientX, y: e.touches[0].clientY },
+                    { x: e.touches[1].clientX, y: e.touches[1].clientY }
+                ];
             } else if (touchCount === 3) {
-                // Prepare for 3-finger vertical drag to adjust camera FOV / lens fuga
+                // 3-finger vertical drag candidate for lens focal length (fuga / FOV)
+                lastOneFingerTap.current = 0;
+                twoFingerStartTime.current = 0;
                 if (controlsRef?.current) controlsRef.current.enabled = false;
                 threeFingerStart.current = e.touches[0].clientY;
             }
@@ -1128,9 +1121,25 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
         };
         
         const handleTouchEnd = (e: TouchEvent) => {
-            if (e.touches.length === 0) {
-                maxTouches.current = 0;
+            // Check for 2-finger tap completion
+            if (twoFingerStartTime.current > 0) {
+                const duration = Date.now() - twoFingerStartTime.current;
+                twoFingerStartTime.current = 0;
+                // If it was a quick tap (< 350ms) and fingers didn't move far (< 35px)
+                if (duration < 350 && twoFingerStartPos.current.length === 2 && e.changedTouches.length > 0) {
+                    let maxDist = 0;
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        const ct = e.changedTouches[i];
+                        const orig = twoFingerStartPos.current[i] || twoFingerStartPos.current[0];
+                        const dist = Math.hypot(ct.clientX - orig.x, ct.clientY - orig.y);
+                        maxDist = Math.max(maxDist, dist);
+                    }
+                    if (maxDist < 35) {
+                        onSnapView();
+                    }
+                }
             }
+
             if (threeFingerStart.current !== null) {
                 threeFingerStart.current = null;
                 if (controlsRef?.current) controlsRef.current.enabled = true;
@@ -1842,6 +1851,7 @@ const SceneContent = ({
                 <OrthographicCamera 
                     makeDefault 
                     position={[camera.position.x || 10, camera.position.y || 10, camera.position.z || 10]} 
+                    up={[camera.up.x, camera.up.y, camera.up.z]}
                     zoom={orthoZoom} 
                 />
             )}

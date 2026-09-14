@@ -42,6 +42,7 @@ export const Icons = {
     Scale: Scaling, // 3D Expansion / Scaling icon instead of balance scale
     AI: Sparkles, Chat: MessageSquare,
     Add: Plus,
+    Plus, // Direct Plus icon
     Minus,
     Delete: Trash2, Export: Download,
     Menu, Close: X, Undo, Redo, Layers,

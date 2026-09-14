@@ -134,7 +134,7 @@ const ToolbarItem = ({
                     : 'text-gray-500 hover:bg-gray-100'
                 }`}
             >
-                <Icon size={24} strokeWidth={active ? 2.5 : 2} />
+                {Icon ? <Icon size={24} strokeWidth={active ? 2.5 : 2} /> : null}
             </button>
         </div>
     );
