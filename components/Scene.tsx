@@ -13,6 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 // @ts-ignore
 import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader';
 import { SceneObject, Vector3, CameraView } from '../types';
+import { Language } from '../utils/translations';
 import gsap from 'gsap';
 
 export interface SceneExportRef {
@@ -26,6 +27,7 @@ export interface SceneExportRef {
 export type CameraAction = { type: string; view?: CameraView };
 
 interface SceneProps {
+    language?: Language;
     objects: SceneObject[];
     visibleLayerIds: string[];
     selectedIds: string[];
@@ -503,7 +505,20 @@ const ExtrusionComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isS
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
             castShadow receiveShadow>
-             <meshStandardMaterial color={material.color} roughness={0.5} metalness={0.1} transparent={true} opacity={material.opacity ?? 0.8} side={THREE.DoubleSide} />
+             {(() => {
+                 const isSolid = (material.opacity ?? 1) >= 0.99;
+                 return (
+                     <meshStandardMaterial 
+                         color={material.color} 
+                         roughness={0.5} 
+                         metalness={0.1} 
+                         transparent={!isSolid} 
+                         opacity={material.opacity ?? 1} 
+                         depthWrite={isSolid} 
+                         side={THREE.DoubleSide} 
+                     />
+                 );
+             })()}
              {isSelected && (
                  <Outlines thickness={0.06} color="#FACC15" screenspace={false} opacity={1} transparent={false} angle={0} />
              )}
@@ -660,10 +675,32 @@ const StrokeComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSel
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
         >
-            <Line points={points} color={data.material.color} lineWidth={data.strokeData.thickness} opacity={data.material.opacity ?? 1} transparent={!isSolid} depthTest={true} depthWrite={isSolid} worldUnits />
+            {/* Outline highlight in vivid yellow - rendered with renderOrder 1 to prevent flickering */}
+            {isSelected && (
+                <Line 
+                    points={points} 
+                    color="#FACC15" 
+                    lineWidth={data.strokeData.thickness * 1.5 + 0.03} 
+                    opacity={1} 
+                    transparent={false} 
+                    depthTest={true} 
+                    depthWrite={false}
+                    renderOrder={1} 
+                    worldUnits 
+                />
+            )}
+            <Line 
+                points={points} 
+                color={data.material.color} 
+                lineWidth={data.strokeData.thickness} 
+                opacity={data.material.opacity ?? 1} 
+                transparent={!isSolid} 
+                depthTest={true} 
+                depthWrite={isSolid} 
+                renderOrder={2} 
+                worldUnits 
+            />
             {data.strokeData.filled && <FilledStrokeMesh points={points} color={data.material.color} opacity={data.material.opacity ?? 1} />}
-            {/* Outline highlight in vivid yellow */}
-            {isSelected && <Line points={points} color="#FACC15" lineWidth={data.strokeData.thickness * 1.6 + 0.02} opacity={0.95} transparent depthTest={false} worldUnits />}
         </group>
     );
 });
@@ -1041,14 +1078,20 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
             castShadow
             receiveShadow
         >
-             <meshStandardMaterial 
-                color={material.color} 
-                roughness={material.roughness} 
-                metalness={material.metalness} 
-                transparent={true} 
-                opacity={material.opacity ?? 0.8}
-                side={THREE.DoubleSide}
-            />
+             {(() => {
+                 const isSolid = (material.opacity ?? 1) >= 0.99;
+                 return (
+                     <meshStandardMaterial 
+                         color={material.color} 
+                         roughness={material.roughness} 
+                         metalness={material.metalness} 
+                         transparent={!isSolid} 
+                         opacity={material.opacity ?? 1}
+                         depthWrite={isSolid}
+                         side={THREE.DoubleSide}
+                     />
+                 );
+             })()}
             {isSelected && (
                 <Outlines thickness={0.05} color="yellow" screenspace={false} opacity={1} transparent={false} angle={0} />
             )}
@@ -1075,12 +1118,21 @@ const smoothVector3Points = (points: THREE.Vector3[], iterations: number = 2): T
 };
 
 // Gesture Handler Component
-const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
+interface GestureHandlerProps {
+    onSnapView: () => void;
+    onAdjustFOV: (delta: number) => void;
+    controlsRef: any;
+    isDrawingMode?: boolean;
+    activeTool?: string;
+}
+
+const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef, isDrawingMode, activeTool }: GestureHandlerProps) => {
     const { gl } = useThree();
     const threeFingerStart = useRef<number | null>(null);
     const tapCandidate = useRef<{ time: number; x: number; y: number; moved: boolean } | null>(null);
     const lastTapTime = useRef<number>(0);
     const lastTapPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const hadMultiTouch = useRef<boolean>(false);
     
     useEffect(() => {
         const el = gl.domElement;
@@ -1088,31 +1140,46 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
         const handleTouchStart = (e: TouchEvent) => {
             const touchCount = e.touches.length;
 
-            if (touchCount === 1) {
-                // Potential 1-finger tap candidate
-                const touch = e.touches[0];
-                tapCandidate.current = {
-                    time: Date.now(),
-                    x: touch.clientX,
-                    y: touch.clientY,
-                    moved: false
-                };
-            } else {
+            if (touchCount > 1) {
                 // Multi-touch cancel single-finger tap
+                hadMultiTouch.current = true;
                 tapCandidate.current = null;
+                lastTapTime.current = 0;
+
                 if (touchCount === 3) {
                     if (controlsRef?.current) controlsRef.current.enabled = false;
                     threeFingerStart.current = e.touches[0].clientY;
                 }
+                return;
             }
+
+            // Exactly 1 touch
+            hadMultiTouch.current = false;
+
+            // Only allow view snapping in select or view tool, NOT while drawing/erasing/lasso
+            if (isDrawingMode || (activeTool && activeTool !== 'select' && activeTool !== 'view')) {
+                tapCandidate.current = null;
+                lastTapTime.current = 0;
+                return;
+            }
+
+            const touch = e.touches[0];
+            tapCandidate.current = {
+                time: Date.now(),
+                x: touch.clientX,
+                y: touch.clientY,
+                moved: false
+            };
         };
         
         const handleTouchMove = (e: TouchEvent) => {
             if (e.touches.length === 1 && tapCandidate.current) {
                 const touch = e.touches[0];
                 const dist = Math.hypot(touch.clientX - tapCandidate.current.x, touch.clientY - tapCandidate.current.y);
-                if (dist > 15) {
+                // Strict movement threshold: > 6px cancels tap (it's orbit / pan)
+                if (dist > 6) {
                     tapCandidate.current.moved = true;
+                    tapCandidate.current = null;
                 }
             } else if (e.touches.length === 3 && threeFingerStart.current !== null) {
                 e.preventDefault();
@@ -1120,29 +1187,46 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
                 const delta = threeFingerStart.current - e.touches[0].clientY;
                 onAdjustFOV(delta);
                 threeFingerStart.current = e.touches[0].clientY;
+            } else if (e.touches.length > 1) {
+                hadMultiTouch.current = true;
+                tapCandidate.current = null;
             }
         };
         
         const handleTouchEnd = (e: TouchEvent) => {
+            if (hadMultiTouch.current || e.touches.length > 0) {
+                tapCandidate.current = null;
+                if (e.touches.length === 0) hadMultiTouch.current = false;
+                if (threeFingerStart.current !== null && e.touches.length < 3) {
+                    threeFingerStart.current = null;
+                    if (controlsRef?.current) controlsRef.current.enabled = true;
+                }
+                return;
+            }
+
             if (tapCandidate.current && !tapCandidate.current.moved) {
                 const now = Date.now();
                 const duration = now - tapCandidate.current.time;
-                // A valid tap must be quick (< 260ms) with minimal movement (< 15px)
-                if (duration < 260) {
+                // Quick deliberate tap (< 180ms)
+                if (duration >= 30 && duration <= 180) {
                     const tapX = tapCandidate.current.x;
                     const tapY = tapCandidate.current.y;
                     const timeSinceLastTap = now - lastTapTime.current;
                     const distFromLastTap = Math.hypot(tapX - lastTapPos.current.x, tapY - lastTapPos.current.y);
 
-                    // If within 350ms of previous tap and close by (< 30px) -> Double Tap!
-                    if (timeSinceLastTap < 350 && distFromLastTap < 30) {
+                    // 1-finger double tap in rapid succession (between 60ms and 260ms, < 14px)
+                    if (timeSinceLastTap >= 60 && timeSinceLastTap <= 260 && distFromLastTap < 14) {
                         onSnapView();
                         lastTapTime.current = 0;
                     } else {
                         lastTapTime.current = now;
                         lastTapPos.current = { x: tapX, y: tapY };
                     }
+                } else {
+                    lastTapTime.current = 0;
                 }
+            } else {
+                lastTapTime.current = 0;
             }
             tapCandidate.current = null;
 
@@ -1154,6 +1238,8 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
 
         const handleTouchCancel = () => {
             tapCandidate.current = null;
+            lastTapTime.current = 0;
+            hadMultiTouch.current = false;
             if (threeFingerStart.current !== null) {
                 threeFingerStart.current = null;
                 if (controlsRef?.current) controlsRef.current.enabled = true;
@@ -1172,13 +1258,14 @@ const GestureHandler = ({ onSnapView, onAdjustFOV, controlsRef }: any) => {
             el.removeEventListener('touchcancel', handleTouchCancel);
             if (controlsRef?.current) controlsRef.current.enabled = true;
         };
-    }, [onSnapView, onAdjustFOV, gl, controlsRef]);
+    }, [onSnapView, onAdjustFOV, gl, controlsRef, isDrawingMode, activeTool]);
     
     return null;
 };
 
 // Scene Content Manager
 const SceneContent = ({ 
+    language = 'es',
     objects, visibleLayerIds, selectedIds, lockedLayerIds, onSelect, onLassoSelect, onTransform, onTransformMultiple, onTransformStart, onTransformEnd,
     mode, isDrawingMode, activeTool, eraserMode, eraserSize = 0.2, currentBrushColor, currentBrushSize, currentBrushSmoothing, 
     isSymmetryEnabled, symmetryX, symmetryAxis = 'x', symmetryPosition = {x:0,y:0,z:0},
@@ -1334,17 +1421,32 @@ const SceneContent = ({
         if (!controls) return;
         
         const target = controls.target ? controls.target.clone() : new THREE.Vector3(0, 0, 0);
+
+        // If already in orthographic, double tap smoothly returns to perspective view
+        if (camType === 'orthographic') {
+            setCamType('perspective');
+            camera.up.set(0, 1, 0);
+            if (controls.object) controls.object.up.set(0, 1, 0);
+            controls.update();
+            if (onFOVDisplayChange) {
+                onFOVDisplayChange(language === 'en' ? 'Perspective View' : 'Vista en Perspectiva');
+                if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
+                fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 1800);
+            }
+            return;
+        }
+
         const relPos = camera.position.clone().sub(target);
         const dist = Math.max(relPos.length(), 6);
         const dir = relPos.clone().normalize();
         
         const views = [
-            { name: 'Vista Superior (Top)', dir: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(0, dist, 0.001), up: new THREE.Vector3(0, 1, 0) },
-            { name: 'Vista Inferior (Bottom)', dir: new THREE.Vector3(0, -1, 0), pos: new THREE.Vector3(0, -dist, -0.001), up: new THREE.Vector3(0, 1, 0) },
-            { name: 'Vista Frontal (Front)', dir: new THREE.Vector3(0, 0, 1), pos: new THREE.Vector3(0, 0, dist), up: new THREE.Vector3(0, 1, 0) },
-            { name: 'Vista Posterior (Back)', dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 0, -dist), up: new THREE.Vector3(0, 1, 0) },
-            { name: 'Vista Derecha (Right)', dir: new THREE.Vector3(1, 0, 0), pos: new THREE.Vector3(dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
-            { name: 'Vista Izquierda (Left)', dir: new THREE.Vector3(-1, 0, 0), pos: new THREE.Vector3(-dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
+            { nameEn: 'Top View', nameEs: 'Vista Superior', dir: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(0, dist, 0.0001), up: new THREE.Vector3(0, 0, -1) },
+            { nameEn: 'Bottom View', nameEs: 'Vista Inferior', dir: new THREE.Vector3(0, -1, 0), pos: new THREE.Vector3(0, -dist, -0.0001), up: new THREE.Vector3(0, 0, 1) },
+            { nameEn: 'Front View', nameEs: 'Vista Frontal', dir: new THREE.Vector3(0, 0, 1), pos: new THREE.Vector3(0, 0, dist), up: new THREE.Vector3(0, 1, 0) },
+            { nameEn: 'Back View', nameEs: 'Vista Posterior', dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 0, -dist), up: new THREE.Vector3(0, 1, 0) },
+            { nameEn: 'Right View', nameEs: 'Vista Derecha', dir: new THREE.Vector3(1, 0, 0), pos: new THREE.Vector3(dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
+            { nameEn: 'Left View', nameEs: 'Vista Izquierda', dir: new THREE.Vector3(-1, 0, 0), pos: new THREE.Vector3(-dist, 0, 0), up: new THREE.Vector3(0, 1, 0) },
         ];
         
         let bestView = views[0];
@@ -1358,34 +1460,43 @@ const SceneContent = ({
         });
         
         const destPos = target.clone().add(bestView.pos);
-        camera.up.set(0, 1, 0);
-        if (controls.object) controls.object.up.set(0, 1, 0);
 
         const visibleHeight = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cameraFov / 2));
         const matchingZoom = gl.domElement.clientHeight / Math.max(visibleHeight, 0.1);
         setOrthoZoom(matchingZoom);
 
         if (onFOVDisplayChange) {
-            onFOVDisplayChange(`${bestView.name} • Ortográfica (Sin Fuga)`);
+            const label = language === 'en' 
+                ? `${bestView.nameEn} • Orthographic`
+                : `${bestView.nameEs} • Ortográfica`;
+            onFOVDisplayChange(label);
             if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
             fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 2000);
         }
 
+        controls.enabled = false;
         gsap.to(camera.position, {
             x: destPos.x,
             y: destPos.y,
             z: destPos.z,
-            duration: 0.45,
+            duration: 0.35,
             ease: "power2.out",
             onUpdate: () => {
                 camera.lookAt(target);
-                controls.update();
             },
             onComplete: () => {
+                camera.up.copy(bestView.up);
+                camera.lookAt(target);
+                if (controls.object) {
+                    controls.object.up.copy(bestView.up);
+                    controls.target.copy(target);
+                    controls.update();
+                }
                 setCamType('orthographic');
+                controls.enabled = true;
             }
         });
-    }, [camera, cameraFov, gl, onFOVDisplayChange]);
+    }, [camera, cameraFov, gl, onFOVDisplayChange, camType, language]);
 
     const handleToggleCamera = useCallback(() => {
         setCamType(prev => prev === 'perspective' ? 'orthographic' : 'perspective');
@@ -1946,6 +2057,8 @@ const SceneContent = ({
                 onSnapView={handleSnapView} 
                 onAdjustFOV={handleAdjustFOV}
                 controlsRef={controlsRef}
+                isDrawingMode={isDrawingMode}
+                activeTool={activeTool}
             />
             
             {camType === 'perspective' && (

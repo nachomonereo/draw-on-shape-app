@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Icons } from './IconComponents';
 import { Layer, SceneObject } from '../types';
 import { ChevronRight, ChevronDown, FolderInput, Plus, ChevronLeft } from 'lucide-react';
+import { Language } from '../utils/translations';
 
 interface LayersPanelProps {
     layers: Layer[];
@@ -21,14 +22,16 @@ interface LayersPanelProps {
     selectedIds?: string[];
     onMoveObjectsToLayer?: (objectIds: string[], targetLayerId: string) => void;
     onCollapse?: () => void;
+    language?: Language;
 }
 
 const LayersPanel: React.FC<LayersPanelProps> = ({ 
     layers, objects, activeLayerId, areGeometryLayersVisible, onToggleGlobalGeometry,
     onLayerSelect, onToggleVisibility, onToggleLock, onAddLayer, onDeleteLayer, onRenameLayer, 
     onDeleteObject, onSelectObject, onToggleObjectVisibility, selectedIds = [],
-    onMoveObjectsToLayer, onCollapse
+    onMoveObjectsToLayer, onCollapse, language = 'es'
 }) => {
+    const isEn = language === 'en';
     // 2 Dedicated Tabs: 'geometry' and 'trace'
     const [activeTab, setActiveTab] = useState<'geometry' | 'trace'>('geometry');
     const [expandedLayerIds, setExpandedLayerIds] = useState<string[]>([]);
@@ -80,7 +83,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                             }`}
                         >
                             <Icons.Box size={14} />
-                            <span>Geometría</span>
+                            <span>{isEn ? 'Geometry' : 'Geometría'}</span>
                             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-500 font-mono">
                                 {geoCount}
                             </span>
@@ -95,7 +98,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                             }`}
                         >
                             <Icons.Brush size={14} />
-                            <span>Trazos</span>
+                            <span>{isEn ? 'Strokes' : 'Trazos'}</span>
                             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-yellow-50 text-yellow-600 font-mono">
                                 {traceCount}
                             </span>
@@ -106,7 +109,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                         <button
                             onClick={onCollapse}
                             className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors shrink-0"
-                            title="Minimizar panel"
+                            title={isEn ? "Minimize panel" : "Minimizar panel"}
                         >
                             <ChevronLeft size={16} />
                         </button>
@@ -118,15 +121,15 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                                Capas de Geometría
+                                {isEn ? 'Geometry Layers' : 'Capas de Geometría'}
                             </span>
                             <button 
                                 onClick={() => onAddLayer('geometry')} 
                                 className="flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg text-xs font-bold transition-colors shadow-2xs"
-                                title="Añadir Capa de Geometría"
+                                title={isEn ? "Add Geometry Layer" : "Añadir Capa de Geometría"}
                             >
                                 <Plus size={14} />
-                                <span>Nueva Capa</span>
+                                <span>{isEn ? 'New Layer' : 'Nueva Capa'}</span>
                             </button>
                         </div>
                         <button 
@@ -138,21 +141,23 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                             }`}
                         >
                             {areGeometryLayersVisible ? <Icons.Eye size={13} /> : <Icons.EyeOff size={13} />}
-                            {areGeometryLayersVisible ? 'Geometría Visible' : 'Geometría Oculta'}
+                            {areGeometryLayersVisible 
+                                ? (isEn ? 'Geometry Visible' : 'Geometría Visible') 
+                                : (isEn ? 'Geometry Hidden' : 'Geometría Oculta')}
                         </button>
                     </div>
                 ) : (
                     <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                            Capas de Trazo
+                            {isEn ? 'Stroke Layers' : 'Capas de Trazo'}
                         </span>
                         <button 
                             onClick={() => onAddLayer('trace')} 
                             className="flex items-center gap-1 px-2.5 py-1 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 rounded-lg text-xs font-bold transition-colors shadow-2xs"
-                            title="Añadir Capa de Trazo"
+                            title={isEn ? "Add Stroke Layer" : "Añadir Capa de Trazo"}
                         >
                             <Plus size={14} />
-                            <span>Nueva Capa</span>
+                            <span>{isEn ? 'New Layer' : 'Nueva Capa'}</span>
                         </button>
                     </div>
                 )}
@@ -162,12 +167,12 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 {tabLayers.length === 0 ? (
                     <div className="text-center py-10 text-gray-400 space-y-2">
-                        <p className="text-xs">No hay capas en esta pestaña</p>
+                        <p className="text-xs">{isEn ? 'No layers in this tab' : 'No hay capas en esta pestaña'}</p>
                         <button
                             onClick={() => onAddLayer(activeTab)}
                             className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold"
                         >
-                            + Crear primera capa
+                            {isEn ? '+ Create first layer' : '+ Crear primera capa'}
                         </button>
                     </div>
                 ) : (
@@ -199,14 +204,14 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); onToggleVisibility(layer.id); }}
                                             className={`p-1 rounded ${layer.visible ? 'text-gray-500 hover:text-gray-800' : 'text-gray-300'}`}
-                                            title={layer.visible ? "Ocultar capa" : "Mostrar capa"}
+                                            title={layer.visible ? (isEn ? "Hide layer" : "Ocultar capa") : (isEn ? "Show layer" : "Mostrar capa")}
                                         >
                                             {layer.visible ? <Icons.Eye size={14} /> : <Icons.EyeOff size={14} />}
                                         </button>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); onToggleLock(layer.id); }}
                                             className={`p-1 rounded ${layer.locked ? 'text-red-500' : 'text-gray-300 hover:text-gray-600'}`}
-                                            title={layer.locked ? "Desbloquear capa" : "Bloquear capa"}
+                                            title={layer.locked ? (isEn ? "Unlock layer" : "Desbloquear capa") : (isEn ? "Lock layer" : "Bloquear capa")}
                                         >
                                             {layer.locked ? <Icons.Lock size={14} /> : <Icons.Unlock size={14} />}
                                         </button>
@@ -229,13 +234,13 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                                 <span 
                                                     onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer); }}
                                                     className={`text-xs truncate select-none ${isLayerActive ? 'font-bold text-gray-900' : 'text-gray-600'}`}
-                                                    title="Doble clic para renombrar"
+                                                    title={isEn ? "Double click to rename" : "Doble clic para renombrar"}
                                                 >
                                                     {layer.name}
                                                 </span>
                                             )}
                                             <span className="text-[10px] text-gray-400 font-mono mt-0.5">
-                                                {objectCount} {objectCount === 1 ? 'objeto' : 'objetos'}
+                                                {objectCount} {objectCount === 1 ? (isEn ? 'object' : 'objeto') : (isEn ? 'objects' : 'objetos')}
                                             </span>
                                         </div>
                                     </div>
@@ -248,10 +253,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                                 onMoveObjectsToLayer(selectedIds, layer.id);
                                             }}
                                             className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors border border-indigo-200/60 shadow-2xs"
-                                            title={`Mover los ${selectedIds.length} elementos seleccionados a esta capa`}
+                                            title={isEn ? `Move ${selectedIds.length} selected items to this layer` : `Mover los ${selectedIds.length} elementos seleccionados a esta capa`}
                                         >
                                             <FolderInput size={12} />
-                                            <span>Mover aquí</span>
+                                            <span>{isEn ? 'Move here' : 'Mover aquí'}</span>
                                         </button>
                                     )}
 
@@ -259,7 +264,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); onDeleteLayer(layer.id); }}
                                             className="p-1.5 text-gray-300 hover:text-red-500 transition-colors ml-1 rounded"
-                                            title="Eliminar capa"
+                                            title={isEn ? "Delete layer" : "Eliminar capa"}
                                         >
                                             <Icons.Delete size={14} />
                                         </button>

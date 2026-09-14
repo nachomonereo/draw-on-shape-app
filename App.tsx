@@ -180,6 +180,7 @@ export default function App() {
     const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
     const [isBgMenuOpen, setIsBgMenuOpen] = useState(false);
     const [isBgColorPickerOpen, setIsBgColorPickerOpen] = useState(false);
+    const [isSelectionColorPickerOpen, setIsSelectionColorPickerOpen] = useState(false);
     const [isLayersPanelCollapsed, setIsLayersPanelCollapsed] = useState(false);
 
     // Brush Presets
@@ -533,6 +534,43 @@ export default function App() {
 
             updateSceneState(updated);
             addToHistory(updated);
+        }
+    };
+
+    const handleSmoothSelected = () => {
+        if (selectedIds.length === 0) return;
+        const currentObjs = sceneObjectsRef.current;
+        let smoothedCount = 0;
+        const updated = currentObjs.map(obj => {
+            if (selectedIds.includes(obj.id) && obj.type === 'stroke' && obj.strokeData && obj.strokeData.points.length > 2) {
+                smoothedCount++;
+                const pts = obj.strokeData.points;
+                const smoothedPts = pts.map((p, idx) => {
+                    if (idx === 0 || idx === pts.length - 1) return p;
+                    const prev = pts[idx - 1];
+                    const next = pts[idx + 1];
+                    return {
+                        x: prev.x * 0.25 + p.x * 0.5 + next.x * 0.25,
+                        y: prev.y * 0.25 + p.y * 0.5 + next.y * 0.25,
+                        z: prev.z * 0.25 + p.z * 0.5 + next.z * 0.25,
+                    };
+                });
+                return {
+                    ...obj,
+                    strokeData: {
+                        ...obj.strokeData,
+                        points: smoothedPts
+                    }
+                };
+            }
+            return obj;
+        });
+        if (smoothedCount > 0) {
+            updateSceneState(updated);
+            addToHistory(updated);
+            showNotification(language === 'en' ? `Smoothed ${smoothedCount} stroke(s)` : `Suavizado(s) ${smoothedCount} trazo(s)`);
+        } else {
+            showNotification(language === 'en' ? "Select strokes to smooth" : "Selecciona trazos para suavizar");
         }
     };
 
@@ -1910,6 +1948,7 @@ export default function App() {
                     backgroundColor={backgroundColor}
                     isGridVisible={isGridVisible}
                     onPickColorAndThickness={handlePickColorAndThickness}
+                    language={language}
                 />
             </div>
 
@@ -1919,6 +1958,7 @@ export default function App() {
                         color={brushColor} 
                         thickness={brushSize} 
                         smoothing={brushSmoothing}
+                        language={language}
                         onColorChange={handleColorChange} 
                         onThicknessChange={setBrushSize} 
                         onSmoothingChange={setBrushSmoothing}
@@ -1935,11 +1975,42 @@ export default function App() {
                     <div className="pointer-events-auto flex flex-col items-center gap-4">
                         {selectedIds.length > 0 && (
                             <div className="flex items-center gap-2 animate-in slide-in-from-bottom-2 bg-white/95 backdrop-blur p-1.5 rounded-full shadow-xl border border-gray-200">
+                                 {/* Selection Color Button */}
+                                 <button
+                                     onClick={() => setIsSelectionColorPickerOpen(true)}
+                                     className="px-3 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1.5 text-gray-700 transition-colors"
+                                     title={language === 'en' ? "Change color of selected elements" : "Cambiar color a los elementos seleccionados"}
+                                 >
+                                     <div 
+                                         className="w-3.5 h-3.5 rounded-full border border-gray-300 shadow-2xs" 
+                                         style={{ 
+                                             backgroundColor: sceneObjects.find(o => selectedIds.includes(o.id))?.material.color || brushColor 
+                                         }} 
+                                     />
+                                     <span>{language === 'en' ? 'Color' : 'Color'}</span>
+                                 </button>
+
+                                 {/* Smooth Selected Strokes Button */}
+                                 {selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'stroke') && (
+                                     <button
+                                         onClick={handleSmoothSelected}
+                                         className="px-3 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                                         title={language === 'en' ? "Smooth selected stroke geometry" : "Suavizar la geometría de los trazos seleccionados"}
+                                     >
+                                         <Icons.Sparkles size={14} />
+                                         <span>{language === 'en' ? 'Smooth' : 'Suavizar'}</span>
+                                     </button>
+                                 )}
+
                                  {selectedIds.length > 1 && (
-                                     <button onClick={handleGroup} className="px-3.5 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700"><Icons.Group size={14} /> Agrupar</button>
+                                     <button onClick={handleGroup} className="px-3.5 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700">
+                                         <Icons.Group size={14} /> {language === 'en' ? 'Group' : 'Agrupar'}
+                                     </button>
                                  )}
                                  {selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'group') && (
-                                     <button onClick={handleUngroup} className="px-3.5 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1"><Icons.Group size={14} /> Desagrupar</button>
+                                     <button onClick={handleUngroup} className="px-3.5 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1">
+                                         <Icons.Group size={14} /> {language === 'en' ? 'Ungroup' : 'Desagrupar'}
+                                     </button>
                                  )}
                                  <button 
                                      onClick={handleSaveSelectionAsComponent} 
@@ -1947,7 +2018,7 @@ export default function App() {
                                      title={language === 'en' ? "Save selection as User Object in library" : "Guardar como User Object reusable en la biblioteca"}
                                  >
                                      <Icons.Package size={14} /> 
-                                     <span>Guardar User Object</span>
+                                     <span>{language === 'en' ? 'Save Component' : 'Guardar User Object'}</span>
                                  </button>
                             </div>
                         )}
@@ -2193,6 +2264,19 @@ export default function App() {
                 onChange={setBackgroundColor}
                 onClose={() => setIsBgColorPickerOpen(false)}
                 title={language === 'en' ? "Background Color" : "Color de Fondo"}
+                language={language}
+            />
+
+            {/* SELECTION BATCH COLOR PICKER MODAL */}
+            <ColorPickerModal
+                isOpen={isSelectionColorPickerOpen}
+                color={sceneObjects.find(o => selectedIds.includes(o.id))?.material.color || brushColor}
+                onChange={handleColorChange}
+                onColorSelect={handleColorChange}
+                onClose={() => setIsSelectionColorPickerOpen(false)}
+                title={language === 'en' ? "Selection Color" : "Color de Selección"}
+                language={language}
+                onActivatePipette={handleActivatePipette}
             />
 
             {/* EXPORT PNG / JPG MODAL */}

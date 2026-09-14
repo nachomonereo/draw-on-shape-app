@@ -1,12 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, Pipette } from 'lucide-react';
+import iro from '@jaames/iro';
+import { Language } from '../utils/translations';
 
 interface ColorPickerModalProps {
     isOpen: boolean;
-    initialColor: string;
+    initialColor?: string;
+    color?: string;
     title?: string;
+    language?: Language;
     onClose: () => void;
-    onColorSelect: (color: string) => void;
+    onColorSelect?: (color: string) => void;
+    onChange?: (color: string) => void;
+    onActivatePipette?: () => void;
 }
 
 const MODA_PALETTE = [
@@ -24,205 +30,145 @@ const MODA_PALETTE = [
     { name: 'Purple', color: '#8B5CF6' }
 ];
 
-const hsvToHex = (h: number, s: number, v: number) => {
-    h = Math.max(0, Math.min(360, h));
-    s = Math.max(0, Math.min(100, s));
-    v = Math.max(0, Math.min(100, v));
-
-    const h_norm = h / 360;
-    const s_norm = s / 100;
-    const v_norm = v / 100;
-
-    const i = Math.floor(h_norm * 6);
-    const f = h_norm * 6 - i;
-    const p = v_norm * (1 - s_norm);
-    const q = v_norm * (1 - f * s_norm);
-    const t = v_norm * (1 - (1 - f) * s_norm);
-    
-    let r = 0, g = 0, b = 0;
-    switch (i % 6) {
-        case 0: r = v_norm; g = t; b = p; break;
-        case 1: r = q; g = v_norm; b = p; break;
-        case 2: r = p; g = v_norm; b = t; break;
-        case 3: r = p; g = q; b = v_norm; break;
-        case 4: r = t; g = p; b = v_norm; break;
-        case 5: r = v_norm; g = p; b = q; break;
-    }
-
-    const toHex = (x: number) => {
-        const hex = Math.round(x * 255).toString(16);
-        return hex.length === 1 ? '0' + hex : hex;
-    };
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-};
-
-const hexToHsv = (hex: string) => {
-    hex = hex.replace('#', '');
-    let r = 0, g = 0, b = 0;
-    if (hex.length === 3) {
-        r = parseInt(hex[0] + hex[0], 16);
-        g = parseInt(hex[1] + hex[1], 16);
-        b = parseInt(hex[2] + hex[2], 16);
-    } else if (hex.length === 6) {
-        r = parseInt(hex.substring(0, 2), 16);
-        g = parseInt(hex.substring(2, 4), 16);
-        b = parseInt(hex.substring(4, 6), 16);
-    }
-    r /= 255; g /= 255; b /= 255;
-    
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    let h = 0, s = 0, v = max;
-    const d = max - min;
-    s = max === 0 ? 0 : d / max;
-    if (max === min) {
-        h = 0;
-    } else {
-        switch (max) {
-            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-            case g: h = (b - r) / d + 2; break;
-            case b: h = (r - g) / d + 4; break;
-        }
-        h /= 6;
-    }
-    return { h: h * 360, s: s * 100, v: v * 100 };
-};
-
 export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     isOpen,
     initialColor,
-    title = 'Selector de Color',
+    color,
+    title,
+    language = 'es',
     onClose,
-    onColorSelect
+    onColorSelect,
+    onChange,
+    onActivatePipette
 }) => {
-    const [currentColor, setCurrentColor] = useState(initialColor || '#5185A6');
-    const [hsv, setHsv] = useState(() => hexToHsv(initialColor || '#5185A6'));
+    const defaultColor = color || initialColor || '#5185A6';
+    const [currentColor, setCurrentColor] = useState(defaultColor);
+    const iroContainerRef = useRef<HTMLDivElement>(null);
+    const pickerRef = useRef<any>(null);
+    const isSelfChange = useRef<boolean>(false);
 
+    const notifyChange = (hex: string) => {
+        if (onColorSelect) onColorSelect(hex);
+        if (onChange) onChange(hex);
+    };
+
+    // When modal opens or initialColor changes, sync currentColor
     useEffect(() => {
         if (isOpen) {
-            const valid = initialColor && initialColor.startsWith('#') ? initialColor : '#5185A6';
+            const chosen = color || initialColor || '#5185A6';
+            const valid = chosen.startsWith('#') ? chosen : '#5185A6';
             setCurrentColor(valid);
-            setHsv(hexToHsv(valid));
         }
-    }, [isOpen, initialColor]);
+    }, [isOpen, color, initialColor]);
 
-    const isDraggingHue = useRef(false);
-    const isDraggingSV = useRef(false);
-    const hueRingRef = useRef<HTMLDivElement>(null);
-    const svSquareRef = useRef<HTMLDivElement>(null);
-
-    const updateHueFromCoords = (clientX: number, clientY: number) => {
-        if (!hueRingRef.current) return;
-        const rect = hueRingRef.current.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const dx = clientX - cx;
-        const dy = clientY - cy;
-        let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-        let deg = (angle + 90 + 360) % 360;
-        setHsv(prev => {
-            const next = { ...prev, h: deg };
-            const hex = hsvToHex(next.h, next.s, next.v);
-            setCurrentColor(hex);
-            onColorSelect(hex);
-            return next;
-        });
-    };
-
-    const updateSVFromCoords = (clientX: number, clientY: number) => {
-        if (!svSquareRef.current) return;
-        const rect = svSquareRef.current.getBoundingClientRect();
-        const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-        const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
-        const s = (x / rect.width) * 100;
-        const v = (1 - (y / rect.height)) * 100;
-        setHsv(prev => {
-            const next = { ...prev, s, v };
-            const hex = hsvToHex(next.h, next.s, next.v);
-            setCurrentColor(hex);
-            onColorSelect(hex);
-            return next;
-        });
-    };
-
+    // Mount iro.js ColorPicker when modal opens
     useEffect(() => {
-        const handleMove = (e: MouseEvent | TouchEvent) => {
-            const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-            const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-            if (isDraggingHue.current) updateHueFromCoords(clientX, clientY);
-            if (isDraggingSV.current) updateSVFromCoords(clientX, clientY);
-        };
-        const handleUp = () => {
-            isDraggingHue.current = false;
-            isDraggingSV.current = false;
-        };
-        window.addEventListener('mousemove', handleMove);
-        window.addEventListener('mouseup', handleUp);
-        window.addEventListener('touchmove', handleMove);
-        window.addEventListener('touchend', handleUp);
+        if (!isOpen || !iroContainerRef.current) return;
+
+        // Clean previous DOM content if any
+        iroContainerRef.current.innerHTML = '';
+
+        const chosen = currentColor || color || initialColor || '#5185A6';
+        const startColor = chosen.startsWith('#') ? chosen : '#5185A6';
+
+        try {
+            const picker = new (iro.ColorPicker as any)(iroContainerRef.current, {
+                width: 200,
+                color: startColor,
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                layout: [
+                    {
+                        component: (iro.ui as any).Wheel,
+                        options: {}
+                    },
+                    {
+                        component: (iro.ui as any).Slider,
+                        options: {
+                            sliderType: 'value'
+                        }
+                    }
+                ]
+            });
+
+            picker.on('color:change', (c: any) => {
+                isSelfChange.current = true;
+                const hex = c.hexString;
+                setCurrentColor(hex);
+                notifyChange(hex);
+                setTimeout(() => {
+                    isSelfChange.current = false;
+                }, 10);
+            });
+
+            pickerRef.current = picker;
+        } catch (err) {
+            console.error("Failed to initialize iro.ColorPicker:", err);
+        }
+
         return () => {
-            window.removeEventListener('mousemove', handleMove);
-            window.removeEventListener('mouseup', handleUp);
-            window.removeEventListener('touchmove', handleMove);
-            window.removeEventListener('touchend', handleUp);
+            if (iroContainerRef.current) {
+                iroContainerRef.current.innerHTML = '';
+            }
+            pickerRef.current = null;
         };
-    }, []);
+    }, [isOpen]);
+
+    // Update picker color when external color changes (e.g. from palette click)
+    useEffect(() => {
+        if (pickerRef.current && !isSelfChange.current && currentColor) {
+            try {
+                pickerRef.current.color.set(currentColor);
+            } catch (_) {}
+        }
+    }, [currentColor]);
+
+    const handleSelectPaletteColor = (paletteColor: string) => {
+        setCurrentColor(paletteColor);
+        if (pickerRef.current) {
+            try {
+                pickerRef.current.color.set(paletteColor);
+            } catch (_) {}
+        }
+        notifyChange(paletteColor);
+    };
 
     if (!isOpen) return null;
 
-    const hueRadius = 78;
-    const angleRad = ((hsv.h - 90) * Math.PI) / 180;
-    const hueX = Math.cos(angleRad) * hueRadius;
-    const hueY = Math.sin(angleRad) * hueRadius;
-    const svX = (hsv.s / 100) * 80;
-    const svY = (1 - hsv.v / 100) * 80;
-
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs select-none animate-in fade-in duration-150">
-            <div className="bg-white rounded-3xl p-6 shadow-2xl border border-gray-100 flex flex-col items-center gap-4 w-72 max-w-[90vw] relative animate-in zoom-in-95 duration-150">
+            <div className="bg-white rounded-3xl p-5 shadow-2xl border border-gray-100 flex flex-col items-center gap-3 w-72 max-w-[92vw] relative animate-in zoom-in-95 duration-150">
+                {/* Header */}
                 <div className="flex items-center justify-between w-full pb-2 border-b border-gray-100">
-                    <span className="text-xs font-bold text-gray-800 tracking-wide uppercase">{title}</span>
-                    <button onClick={onClose} className="p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
-                        <X size={16} />
-                    </button>
-                </div>
-
-                <div className="relative w-48 h-48 flex items-center justify-center my-1">
-                    <div 
-                        ref={hueRingRef}
-                        onMouseDown={(e) => { isDraggingHue.current = true; updateHueFromCoords(e.clientX, e.clientY); }}
-                        onTouchStart={(e) => { isDraggingHue.current = true; updateHueFromCoords(e.touches[0].clientX, e.touches[0].clientY); }}
-                        className="absolute inset-0 rounded-full cursor-crosshair shadow-xs border border-gray-100"
-                        style={{ 
-                            background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)',
-                            mask: 'radial-gradient(transparent 58px, black 59px)',
-                            WebkitMask: 'radial-gradient(transparent 58px, black 59px)'
-                        }}
-                    />
-                    <div 
-                        className="absolute w-5 h-5 bg-white border-2 border-white rounded-full shadow-md pointer-events-none z-10"
-                        style={{ 
-                            top: `calc(50% + ${hueY}px - 10px)`, 
-                            left: `calc(50% + ${hueX}px - 10px)`,
-                            boxShadow: '0 0 4px rgba(0,0,0,0.3)'
-                        }}
-                    />
-
-                    <div 
-                        ref={svSquareRef}
-                        onMouseDown={(e) => { isDraggingSV.current = true; updateSVFromCoords(e.clientX, e.clientY); }}
-                        onTouchStart={(e) => { isDraggingSV.current = true; updateSVFromCoords(e.touches[0].clientX, e.touches[0].clientY); }}
-                        className="absolute w-20 h-20 shadow-inner cursor-crosshair z-0 rounded-lg overflow-hidden border border-black/10"
-                        style={{ backgroundColor: `hsl(${hsv.h}, 100%, 50%)` }}
-                    >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
-                        <div 
-                            className="absolute w-3 h-3 bg-transparent border-2 border-white rounded-full shadow-xs pointer-events-none transform -translate-x-1/2 -translate-y-1/2"
-                            style={{ top: `${svY}px`, left: `${svX}px`, boxShadow: '0 0 2px rgba(0,0,0,0.5)' }}
-                        />
+                    <span className="text-xs font-bold text-gray-800 tracking-wide uppercase">
+                        {title || (language === 'en' ? 'Color Picker' : 'Selector de Color')}
+                    </span>
+                    <div className="flex items-center gap-1">
+                        {onActivatePipette && (
+                            <button 
+                                type="button"
+                                onClick={() => {
+                                    onClose();
+                                    onActivatePipette();
+                                }}
+                                className="p-1.5 rounded-full text-moda-3 hover:bg-blue-50 transition-colors"
+                                title={language === 'en' ? "Eyedropper: Pick color from 3D scene" : "Pipeta: Copiar color de la escena"}
+                            >
+                                <Pipette size={15} />
+                            </button>
+                        )}
+                        <button onClick={onClose} className="p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+                            <X size={16} />
+                        </button>
                     </div>
                 </div>
 
+                {/* iro.js Color Wheel Mount Container */}
+                <div className="flex justify-center items-center my-1">
+                    <div ref={iroContainerRef} className="iro-picker-container" />
+                </div>
+
+                {/* Bottom Color Bar & Done Button */}
                 <div className="w-full space-y-3">
                     <div className="flex items-center justify-between px-1">
                         <div className="flex items-center gap-2">
@@ -234,19 +180,16 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
                             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-colors shadow-2xs"
                         >
                             <Check size={13} />
-                            <span>Listo</span>
+                            <span>{language === 'en' ? 'Done' : 'Listo'}</span>
                         </button>
                     </div>
 
+                    {/* Moda Palette Swatches */}
                     <div className="grid grid-cols-6 gap-1.5 pt-2 border-t border-gray-100">
                         {MODA_PALETTE.map(c => (
                             <button
                                 key={c.color}
-                                onClick={() => {
-                                    setCurrentColor(c.color);
-                                    setHsv(hexToHsv(c.color));
-                                    onColorSelect(c.color);
-                                }}
+                                onClick={() => handleSelectPaletteColor(c.color)}
                                 className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 shadow-2xs ${
                                     currentColor.toLowerCase() === c.color.toLowerCase() ? 'border-blue-600 scale-105' : 'border-white'
                                 }`}
@@ -260,4 +203,3 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
         </div>
     );
 };
-
