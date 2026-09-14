@@ -5,7 +5,7 @@ import { SceneCanvas, SceneExportRef, CameraAction } from './components/Scene';
 import ChatPanel from './components/ChatPanel';
 import PropertiesPanel from './components/PropertiesPanel';
 import LayersPanel from './components/LayersPanel';
-import RadialPalette from './components/RadialPalette';
+import RadialPalette, { BrushPreset } from './components/RadialPalette';
 import { SceneObject, ShapeType, ChatMessage, Vector3, Layer, UserProfile, Project, CameraView, SceneComponent } from './types';
 import { generate3DContent } from './services/geminiService';
 import { generateBlobGeometry } from './services/blobService';
@@ -170,8 +170,23 @@ export default function App() {
     const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
     
     // Tools
-    const [activeTool, setActiveTool] = useState<'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft-step-1' | 'loft-step-2'>('brush'); 
+    const [activeTool, setActiveTool] = useState<'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft-step-1' | 'loft-step-2' | 'pipette'>('brush'); 
+    const [previousTool, setPreviousTool] = useState<'brush' | 'select'>('brush');
     const [eraserMode, setEraserMode] = useState<'object' | 'partial'>('partial'); 
+
+    // Background Color & Grid
+    const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
+    const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
+    const [isBgMenuOpen, setIsBgMenuOpen] = useState(false);
+
+    // Brush Presets
+    const [brushPresets, setBrushPresets] = useState<BrushPreset[]>([
+        { id: '1', color: '#000000', thickness: 0.05 },
+        { id: '2', color: '#ef4444', thickness: 0.08 },
+        { id: '3', color: '#3b82f6', thickness: 0.03 },
+        { id: '4', color: '#10b981', thickness: 0.12 },
+        { id: '5', color: '#f59e0b', thickness: 0.05 }
+    ]); 
     
     // Instruction Banner & Toast Notification State
     const [instruction, setInstruction] = useState<string | null>(null);
@@ -424,6 +439,36 @@ export default function App() {
             updateSceneState(updated);
             addToHistory(updated);
         }
+    };
+
+    const handleActivatePipette = () => {
+        if (activeTool !== 'pipette') {
+            setPreviousTool(activeTool === 'select' ? 'select' : 'brush');
+            setActiveTool('pipette');
+            setInstruction(language === 'en' ? "Tap any stroke or object to copy color & thickness" : "Toca cualquier trazo u objeto para copiar color y grosor");
+        } else {
+            setActiveTool(previousTool || 'brush');
+            setInstruction(null);
+        }
+    };
+
+    const handlePickColorAndThickness = (color: string, thickness?: number) => {
+        setBrushColor(color);
+        if (typeof thickness === 'number' && thickness > 0) {
+            setBrushSize(thickness);
+        }
+
+        if (selectedIds.length > 0) {
+            handleColorChange(color);
+        }
+
+        showNotification(
+            thickness 
+                ? (language === 'en' ? `Color ${color} & thickness ${thickness.toFixed(2)} copied!` : `¡Color ${color} y grosor ${thickness.toFixed(2)} copiados!`)
+                : (language === 'en' ? `Color ${color} copied!` : `¡Color ${color} copiado!`)
+        );
+        setActiveTool(previousTool || 'brush');
+        setInstruction(null);
     };
 
     const handleTransformMultiple = (updatesList: { id: string; updates: Partial<SceneObject> }[]) => {
@@ -924,13 +969,25 @@ export default function App() {
 
             const existingIdx = projectsList.findIndex(p => p.name.toLowerCase() === nameToUse.toLowerCase());
             
+            const camState = exportRef.current?.getCameraState?.();
+
             const updatedProject: Project = {
                 id: existingIdx >= 0 ? projectsList[existingIdx].id : generateId(),
                 name: nameToUse,
                 updatedAt: Date.now(),
                 thumbnail,
                 sceneObjects: sceneObjectsRef.current,
-                layers
+                layers,
+                savedViews: savedViews,
+                cameraState: camState,
+                brushSettings: {
+                    color: brushColor,
+                    size: brushSize,
+                    smoothing: brushSmoothing,
+                    presets: brushPresets
+                },
+                backgroundColor: backgroundColor,
+                isGridVisible: isGridVisible
             };
 
             if (existingIdx >= 0) {
@@ -958,6 +1015,9 @@ export default function App() {
             setHistory([INITIAL_SCENE]);
             setHistoryIndex(0);
             setProjectName("Untitled Project");
+            setSavedViews([]);
+            setBackgroundColor('#ffffff');
+            setIsGridVisible(true);
             setIsMenuOpen(false);
             showNotification("Nuevo proyecto iniciado");
         }
@@ -965,7 +1025,24 @@ export default function App() {
 
     const handleSaveProject = async () => {
         try {
-            const projectData = { sceneObjects: sceneObjectsRef.current, layers, version: 1.0, name: projectName };
+            const camState = exportRef.current?.getCameraState?.();
+            const projectData: Project = { 
+                id: generateId(),
+                sceneObjects: sceneObjectsRef.current, 
+                layers, 
+                version: 1.0, 
+                name: projectName,
+                savedViews: savedViews,
+                cameraState: camState,
+                brushSettings: {
+                    color: brushColor,
+                    size: brushSize,
+                    smoothing: brushSmoothing,
+                    presets: brushPresets
+                },
+                backgroundColor: backgroundColor,
+                isGridVisible: isGridVisible
+            };
             const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
             const safeName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
             const filename = `${safeName}-${Date.now()}.json`;
@@ -997,6 +1074,27 @@ export default function App() {
                     setHistory([data.sceneObjects]);
                     setHistoryIndex(0);
                     if (data.name) setProjectName(data.name);
+                    if (data.savedViews) setSavedViews(data.savedViews);
+                    if (data.cameraState) {
+                        setCameraAction({
+                            type: 'set',
+                            view: {
+                                id: 'loaded-view',
+                                name: 'Loaded View',
+                                position: data.cameraState.position,
+                                target: data.cameraState.target,
+                                fov: data.cameraState.fov || 45
+                            }
+                        });
+                    }
+                    if (data.brushSettings) {
+                        if (data.brushSettings.color) setBrushColor(data.brushSettings.color);
+                        if (data.brushSettings.size) setBrushSize(data.brushSettings.size);
+                        if (typeof data.brushSettings.smoothing === 'number') setBrushSmoothing(data.brushSettings.smoothing);
+                        if (data.brushSettings.presets) setBrushPresets(data.brushSettings.presets);
+                    }
+                    if (data.backgroundColor) setBackgroundColor(data.backgroundColor);
+                    if (typeof data.isGridVisible === 'boolean') setIsGridVisible(data.isGridVisible);
                     showNotification(`¡Proyecto '${data.name || file.name}' cargado!`);
                 }
             } catch (err) { console.error("Failed to load", err); alert("Archivo inválido"); }
@@ -1514,11 +1612,64 @@ export default function App() {
 
             <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
                  {showUI && (
-                     <div className="bg-white/80 backdrop-blur rounded-full px-3 py-2 flex gap-4 border border-gray-200 shadow-sm items-center animate-in fade-in duration-200">
-                        <div className="flex gap-2">
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('translate'); }} className={transformMode === 'translate' && activeTool === 'select' ? 'text-moda-4' : 'text-gray-300'}><Icons.Move size={18} /></button>
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('rotate'); }} className={transformMode === 'rotate' && activeTool === 'select' ? 'text-moda-4' : 'text-gray-300'}><Icons.Rotate size={18} /></button>
-                             <button onClick={() => { handleToolChange('select'); setTransformMode('scale'); }} className={transformMode === 'scale' && activeTool === 'select' ? 'text-moda-4' : 'text-gray-300'}><Icons.Scale size={18} /></button>
+                     <div className="bg-white/80 backdrop-blur rounded-full px-3 py-1.5 flex gap-2 border border-gray-200 shadow-sm items-center animate-in fade-in duration-200">
+                        <div className="flex gap-1">
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('translate'); }} className={`p-1.5 rounded-full ${transformMode === 'translate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Mover"><Icons.Move size={17} /></button>
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('rotate'); }} className={`p-1.5 rounded-full ${transformMode === 'rotate' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Rotar"><Icons.Rotate size={17} /></button>
+                             <button onClick={() => { handleToolChange('select'); setTransformMode('scale'); }} className={`p-1.5 rounded-full ${transformMode === 'scale' && activeTool === 'select' ? 'text-moda-4 bg-yellow-50' : 'text-gray-400 hover:text-gray-600'}`} title="Escalar"><Icons.Scale size={17} /></button>
+                        </div>
+                        <div className="w-[1px] h-5 bg-gray-200" />
+                        {/* Grid Visibility Toggle */}
+                        <button 
+                            onClick={() => {
+                                setIsGridVisible(!isGridVisible);
+                                showNotification(!isGridVisible ? "Rejilla activada" : "Rejilla oculta");
+                            }} 
+                            className={`p-1.5 rounded-full transition-colors ${isGridVisible ? 'text-moda-3 font-bold bg-blue-50' : 'text-gray-400 hover:text-gray-600'}`}
+                            title={isGridVisible ? "Ocultar Rejilla" : "Mostrar Rejilla"}
+                        >
+                            <Icons.Grid size={17} />
+                        </button>
+                        {/* Background Color Popover */}
+                        <div className="relative">
+                            <button 
+                                onClick={() => setIsBgMenuOpen(!isBgMenuOpen)} 
+                                className="w-6 h-6 rounded-full border border-gray-300 shadow-sm flex items-center justify-center p-0.5 hover:scale-105 transition-transform"
+                                style={{ backgroundColor: backgroundColor }}
+                                title="Color de Fondo"
+                            >
+                                <div className="w-full h-full rounded-full border border-black/10" />
+                            </button>
+                            {isBgMenuOpen && (
+                                <div className="absolute top-9 right-0 bg-white rounded-xl shadow-xl border border-gray-200 p-2.5 flex flex-col gap-2 z-50 min-w-[140px] animate-in fade-in zoom-in-95">
+                                    <div className="text-[10px] font-bold text-gray-500 uppercase px-1 tracking-wider">Fondo 3D</div>
+                                    <div className="grid grid-cols-4 gap-1.5 px-1">
+                                        {[
+                                            { color: '#ffffff', name: 'Blanco' },
+                                            { color: '#f1f5f9', name: 'Gris' },
+                                            { color: '#1e293b', name: 'Pizarra' },
+                                            { color: '#090d16', name: 'Negro' }
+                                        ].map(bg => (
+                                            <button
+                                                key={bg.color}
+                                                onClick={() => { setBackgroundColor(bg.color); setIsBgMenuOpen(false); }}
+                                                className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${backgroundColor.toLowerCase() === bg.color.toLowerCase() ? 'border-blue-500 scale-110 shadow' : 'border-gray-200'}`}
+                                                style={{ backgroundColor: bg.color }}
+                                                title={bg.name}
+                                            />
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 px-1 pt-1.5 border-t border-gray-100">
+                                        <input 
+                                            type="color" 
+                                            value={backgroundColor} 
+                                            onChange={(e) => setBackgroundColor(e.target.value)} 
+                                            className="w-5 h-5 rounded border-0 cursor-pointer p-0"
+                                        />
+                                        <span className="text-[11px] font-mono text-gray-600 uppercase">{backgroundColor}</span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                      </div>
                  )}
@@ -1577,10 +1728,13 @@ export default function App() {
                     cameraAction={cameraAction}
                     onCameraActionHandled={() => setCameraAction(null)}
                     exportRef={exportRef}
+                    backgroundColor={backgroundColor}
+                    isGridVisible={isGridVisible}
+                    onPickColorAndThickness={handlePickColorAndThickness}
                 />
             </div>
 
-            {showUI && (activeTool === 'brush' || activeTool === 'draw-plane' || activeTool === 'eraser' || selectedIds.length > 0) && (
+            {showUI && (activeTool === 'brush' || activeTool === 'draw-plane' || activeTool === 'eraser' || selectedIds.length > 0 || activeTool === 'pipette') && (
                  <div className="absolute bottom-20 left-20 z-50 animate-in fade-in duration-200">
                     <RadialPalette 
                         color={brushColor} 
@@ -1589,6 +1743,10 @@ export default function App() {
                         onColorChange={handleColorChange} 
                         onThicknessChange={setBrushSize} 
                         onSmoothingChange={setBrushSmoothing}
+                        presets={brushPresets}
+                        onPresetsChange={setBrushPresets}
+                        onActivatePipette={handleActivatePipette}
+                        isPipetteActive={activeTool === 'pipette'}
                     />
                 </div>
             )}
@@ -1669,6 +1827,16 @@ export default function App() {
                                  </ToolbarItem>
                                 
                                 <div className="h-6 w-[1px] bg-gray-200" />
+                                <ToolbarItem 
+                                     active={activeTool === 'pipette'} 
+                                     onClick={handleActivatePipette} 
+                                     icon={Icons.Pipette} 
+                                     tooltipText="Pipeta (Copiar Color y Grosor)" 
+                                     onHover={setHoverInfo} 
+                                     onLeave={() => setHoverInfo(null)}
+                                 />
+                                 
+                                 <div className="h-6 w-[1px] bg-gray-200" />
                                 
                                 {/* GUIDE TOOLS REMOVED */}
                                 
@@ -1801,6 +1969,27 @@ export default function App() {
                     setHistory([proj.sceneObjects]);
                     setHistoryIndex(0);
                     if (proj.name) setProjectName(proj.name);
+                    if (proj.savedViews) setSavedViews(proj.savedViews);
+                    if (proj.cameraState) {
+                        setCameraAction({
+                            type: 'set',
+                            view: {
+                                id: 'loaded-view',
+                                name: 'Loaded View',
+                                position: proj.cameraState.position,
+                                target: proj.cameraState.target,
+                                fov: proj.cameraState.fov || 45
+                            }
+                        });
+                    }
+                    if (proj.brushSettings) {
+                        if (proj.brushSettings.color) setBrushColor(proj.brushSettings.color);
+                        if (proj.brushSettings.size) setBrushSize(proj.brushSettings.size);
+                        if (typeof proj.brushSettings.smoothing === 'number') setBrushSmoothing(proj.brushSettings.smoothing);
+                        if (proj.brushSettings.presets) setBrushPresets(proj.brushSettings.presets);
+                    }
+                    if (proj.backgroundColor) setBackgroundColor(proj.backgroundColor);
+                    if (typeof proj.isGridVisible === 'boolean') setIsGridVisible(proj.isGridVisible);
                     showNotification(language === 'en' ? `Project '${proj.name}' loaded!` : `¡Proyecto '${proj.name}' cargado!`);
                 }}
                 onNewProject={() => {
@@ -1811,6 +2000,9 @@ export default function App() {
                     setHistory([INITIAL_SCENE]);
                     setHistoryIndex(0);
                     setProjectName("Untitled Project");
+                    setSavedViews([]);
+                    setBackgroundColor('#ffffff');
+                    setIsGridVisible(true);
                     showNotification(language === 'en' ? "New project started" : "Nuevo proyecto iniciado");
                 }}
             />

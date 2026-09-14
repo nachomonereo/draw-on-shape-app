@@ -1,20 +1,24 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Pipette } from 'lucide-react';
+
+export interface BrushPreset {
+    id: string;
+    color: string;
+    thickness: number;
+}
 
 interface RadialPaletteProps {
     color: string;
     thickness: number;
-    smoothing: number; // New prop
+    smoothing: number;
     onColorChange: (color: string) => void;
     onThicknessChange: (size: number) => void;
-    onSmoothingChange: (smooth: number) => void; // New callback
-}
-
-interface BrushPreset {
-    id: string;
-    color: string;
-    thickness: number;
+    onSmoothingChange: (smooth: number) => void;
+    presets?: BrushPreset[];
+    onPresetsChange?: (presets: BrushPreset[]) => void;
+    onActivatePipette?: () => void;
+    isPipetteActive?: boolean;
 }
 
 const MODA_PALETTE = [
@@ -89,10 +93,30 @@ const hexToHsv = (hex: string) => {
     return { h: h * 360, s: s * 100, v: v * 100 };
 };
 
-const RadialPalette: React.FC<RadialPaletteProps> = ({ color, thickness, smoothing, onColorChange, onThicknessChange, onSmoothingChange }) => {
+const RadialPalette: React.FC<RadialPaletteProps> = ({ 
+    color, 
+    thickness, 
+    smoothing, 
+    onColorChange, 
+    onThicknessChange, 
+    onSmoothingChange,
+    presets,
+    onPresetsChange,
+    onActivatePipette,
+    isPipetteActive
+}) => {
     const [isOpen, setIsOpen] = useState(false);
     const [hsv, setHsv] = useState({ h: 0, s: 0, v: 0 });
-    const [savedBrushes, setSavedBrushes] = useState<BrushPreset[]>([]);
+    const [localSavedBrushes, setLocalSavedBrushes] = useState<BrushPreset[]>([]);
+    
+    const activeBrushes = presets !== undefined ? presets : localSavedBrushes;
+    const setBrushes = (updater: (prev: BrushPreset[]) => BrushPreset[]) => {
+        if (onPresetsChange) {
+            onPresetsChange(updater(activeBrushes));
+        } else {
+            setLocalSavedBrushes(updater);
+        }
+    };
     
     const containerRef = useRef<HTMLDivElement>(null);
     const hueRingRef = useRef<HTMLDivElement>(null);
@@ -178,7 +202,7 @@ const RadialPalette: React.FC<RadialPaletteProps> = ({ color, thickness, smoothi
             color,
             thickness
         };
-        setSavedBrushes(prev => [...prev, newPreset]);
+        setBrushes(prev => [...prev, newPreset]);
     };
 
     const loadBrush = (preset: BrushPreset) => {
@@ -187,7 +211,7 @@ const RadialPalette: React.FC<RadialPaletteProps> = ({ color, thickness, smoothi
     };
 
     const deleteBrush = (id: string) => {
-        setSavedBrushes(prev => prev.filter(b => b.id !== id));
+        setBrushes(prev => prev.filter(b => b.id !== id));
     };
 
     // Calculate Hue Handle Position (Outer Ring)
@@ -313,6 +337,24 @@ const RadialPalette: React.FC<RadialPaletteProps> = ({ color, thickness, smoothi
                     <div className="w-full pt-2 border-t border-gray-100">
                         <div className="flex justify-between items-center mb-2">
                             <span className="text-[10px] font-bold text-gray-400 uppercase">Colors</span>
+                            {onActivatePipette && (
+                                <button 
+                                    type="button"
+                                    onClick={() => {
+                                        setIsOpen(false);
+                                        onActivatePipette();
+                                    }}
+                                    className={`flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-bold transition-all ${
+                                        isPipetteActive 
+                                            ? 'bg-moda-3 text-white shadow-sm' 
+                                            : 'bg-blue-50 text-moda-3 hover:bg-blue-100'
+                                    }`}
+                                    title="Pipeta: Copiar color y grosor de cualquier elemento de la escena"
+                                >
+                                    <Pipette size={12} />
+                                    <span>Pipeta</span>
+                                </button>
+                            )}
                         </div>
                         <div className="flex flex-wrap gap-2 px-1 justify-center">
                             {MODA_PALETTE.map(p => (
@@ -336,8 +378,8 @@ const RadialPalette: React.FC<RadialPaletteProps> = ({ color, thickness, smoothi
                             </button>
                         </div>
                         <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto px-1 justify-center">
-                            {savedBrushes.length === 0 && <span className="text-[10px] text-gray-300 italic">No saved brushes</span>}
-                            {savedBrushes.map(brush => {
+                            {activeBrushes.length === 0 && <span className="text-[10px] text-gray-300 italic">No saved brushes</span>}
+                            {activeBrushes.map(brush => {
                                 const previewSize = Math.max(4, Math.min(16, (brush.thickness / MAX_BRUSH) * 16));
                                 return (
                                     <div key={brush.id} className="relative group">

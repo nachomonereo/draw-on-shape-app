@@ -38,7 +38,7 @@ interface SceneProps {
     onTransformEnd: () => void;
     mode: 'translate' | 'rotate' | 'scale';
     isDrawingMode: boolean;
-    activeTool: 'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft' | 'loft-step-1' | 'loft-step-2';
+    activeTool: 'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft' | 'loft-step-1' | 'loft-step-2' | 'pipette';
     eraserMode: 'object' | 'partial';
     eraserSize?: number;
     currentBrushColor: string;
@@ -53,6 +53,11 @@ interface SceneProps {
 
     // Geometry Visibility
     areGeometryVisible?: boolean;
+
+    // Scene Environment & Helpers
+    isGridVisible?: boolean;
+    backgroundColor?: string;
+    onPickColorAndThickness?: (color: string, thickness?: number) => void;
 
     onStrokeComplete: (points: Vector3[], strokeCamDir?: THREE.Vector3) => void;
     onErase?: (id: string) => void;
@@ -190,7 +195,7 @@ const generateDXF = (objects: SceneObject[], threeGroup: THREE.Group) => {
 };
 
 // Scene Exporter Component (Internal to Canvas)
-const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objectsGroupRef: React.RefObject<THREE.Group> }>(({ objects, objectsGroupRef }, ref) => {
+const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objectsGroupRef: React.RefObject<THREE.Group>, backgroundColor?: string }>(({ objects, objectsGroupRef, backgroundColor }, ref) => {
     const { gl, scene, camera, controls } = useThree();
 
     const buildExportScene = () => {
@@ -313,7 +318,7 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
                 if (transparent) {
                     gl.setClearColor(0x000000, 0);
                 } else {
-                    gl.setClearColor(0xffffff, 1);
+                    gl.setClearColor(new THREE.Color(backgroundColor || '#ffffff'), 1);
                 }
 
                 gl.render(scene, camera);
@@ -1172,7 +1177,8 @@ const SceneContent = ({
     areGeometryVisible, onStrokeComplete, onErase, onPartialErase,
     cameraAction, onCameraActionHandled, exportRef,
     onCameraDirectionUpdate, onUndo, onRedo, fitViewTrigger, isoViewTrigger,
-    objectsGroupRef, onLassoPointsChange, onFOVDisplayChange
+    objectsGroupRef, onLassoPointsChange, onFOVDisplayChange,
+    isGridVisible = true, backgroundColor = '#ffffff', onPickColorAndThickness
 }: SceneProps & { objectsGroupRef: React.RefObject<THREE.Group> }) => {
     const { scene, camera, gl, raycaster, pointer } = useThree();
     const currentPoints = useRef<THREE.Vector3[]>([]);
@@ -1719,6 +1725,42 @@ const SceneContent = ({
              return; 
         }
 
+        // --- PIPETTE / COLOR & THICKNESS SAMPLER ---
+        if (activeTool === 'pipette') {
+            const hits = raycaster.intersectObjects(scene.children, true);
+            const validHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
+            if (validHits.length > 0) {
+                let curr: THREE.Object3D | null = validHits[0].object;
+                let foundObj: SceneObject | undefined;
+                while (curr && curr !== scene) {
+                    if (curr.userData?.id) {
+                        foundObj = objects.find(o => o.id === curr.userData.id);
+                        if (foundObj) break;
+                    }
+                    curr = curr.parent;
+                }
+                if (foundObj) {
+                    const color = foundObj.material?.color || '#000000';
+                    const thickness = (foundObj.type === 'stroke' && foundObj.strokeData) ? foundObj.strokeData.thickness : undefined;
+                    if (onPickColorAndThickness) {
+                        onPickColorAndThickness(color, thickness);
+                    }
+                    return;
+                }
+                const mesh = validHits[0].object as THREE.Mesh;
+                if (mesh.material) {
+                    const mat: any = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+                    if (mat && mat.color) {
+                        const hex = '#' + mat.color.getHexString();
+                        if (onPickColorAndThickness) {
+                            onPickColorAndThickness(hex, undefined);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         // --- BRUSH / ERASER START ---
         if (activeTool === 'brush') {
             const hits = raycaster.intersectObjects(scene.children, true);
@@ -1739,7 +1781,7 @@ const SceneContent = ({
              if (controlsRef.current) controlsRef.current.enabled = false;
         }
 
-    }, [activeTool, scene, raycaster, mode, selectedIds, eraserMode, camera]);
+    }, [activeTool, scene, raycaster, mode, selectedIds, eraserMode, camera, objects, onPickColorAndThickness]);
 
     const handlePointerMove = useCallback((e: any) => {
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
@@ -1834,6 +1876,7 @@ const SceneContent = ({
 
     return (
         <>
+            <color attach="background" args={[backgroundColor || '#ffffff']} />
             <GestureHandler 
                 onSnapView={handleSnapView} 
                 onAdjustFOV={handleAdjustFOV}
@@ -1857,7 +1900,22 @@ const SceneContent = ({
             )}
 
             <group ref={objectsGroupRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerMissed={handleMiss}>
-                {/* GRID REMOVED */}
+                {/* 3D GROUND GRID */}
+                {isGridVisible !== false && (
+                    <Grid
+                        position={[0, -0.01, 0]}
+                        args={[100, 100]}
+                        cellSize={0.5}
+                        cellThickness={0.8}
+                        cellColor="#94a3b8"
+                        sectionSize={2.5}
+                        sectionThickness={1.2}
+                        sectionColor="#64748b"
+                        fadeDistance={40}
+                        fadeStrength={1.5}
+                        infiniteGrid
+                    />
+                )}
                 
                 <SymmetryPlane 
                     enabled={isSymmetryEnabled} 
@@ -1911,6 +1969,17 @@ const SceneContent = ({
                             isLocked: isLock,
                             onSelect: (idOrEvent: any) => {
                                 if (!isLock) {
+                                    if (activeTool === 'pipette') {
+                                        if (idOrEvent && typeof idOrEvent !== 'string' && idOrEvent.stopPropagation) {
+                                            idOrEvent.stopPropagation();
+                                        }
+                                        const color = o.material?.color || '#000000';
+                                        const thickness = (o.type === 'stroke' && o.strokeData) ? o.strokeData.thickness : undefined;
+                                        if (onPickColorAndThickness) {
+                                            onPickColorAndThickness(color, thickness);
+                                        }
+                                        return;
+                                    }
                                     if (typeof idOrEvent === 'string') {
                                         if (activeTool === 'select' || activeTool === 'lasso' || activeTool === 'loft-step-1' || activeTool === 'loft-step-2') {
                                             onSelect(getRootParentId(idOrEvent, objects));
@@ -2122,7 +2191,7 @@ const SceneContent = ({
             <directionalLight position={[-15, 15, -15]} intensity={0.45} />
             <directionalLight position={[0, -10, 0]} intensity={0.2} />
             
-            <SceneExporter ref={exportRef} objects={objects} objectsGroupRef={objectsGroupRef} />
+            <SceneExporter ref={exportRef} objects={objects} objectsGroupRef={objectsGroupRef} backgroundColor={backgroundColor} />
         </>
     );
 };
@@ -2133,7 +2202,7 @@ export const SceneCanvas = (props: SceneProps) => {
     const [fovBadgeText, setFovBadgeText] = useState<string | null>(null);
 
     return (
-        <div className="relative w-full h-full">
+        <div className="relative w-full h-full" style={{ backgroundColor: props.backgroundColor || '#ffffff' }}>
             <Canvas dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }}>
                 <SceneContent 
                     {...props} 

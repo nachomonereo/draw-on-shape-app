@@ -106,6 +106,20 @@ export interface Project {
     thumbnail?: string; 
     sceneObjects: SceneObject[];
     layers: Layer[];
+    savedViews?: CameraView[];
+    cameraState?: {
+        position: Vector3;
+        target: Vector3;
+        fov?: number;
+    };
+    brushSettings?: {
+        color: string;
+        size: number;
+        smoothing: number;
+        presets?: { id: string; color: string; thickness: number }[];
+    };
+    backgroundColor?: string;
+    isGridVisible?: boolean;
 }
 
 export interface CameraView {
