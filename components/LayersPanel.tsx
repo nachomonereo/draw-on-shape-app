@@ -182,15 +182,26 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                         const isExpanded = expandedLayerIds.includes(layer.id);
                         const objectCount = layerObjects.length;
                         const isLayerActive = activeLayerId === layer.id;
+                        const selectedInLayer = layerObjects.filter(o => selectedIds.includes(o.id));
+                        const hasSelectedObjects = selectedInLayer.length > 0;
                         
                         return (
-                            <div key={layer.id} className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-2xs">
+                            <div 
+                                key={layer.id} 
+                                className={`rounded-xl overflow-hidden border shadow-2xs transition-all ${
+                                    hasSelectedObjects 
+                                        ? 'bg-amber-50/50 border-amber-300 ring-2 ring-amber-300/60' 
+                                        : 'bg-white border-gray-100'
+                                }`}
+                            >
                                 <div 
                                     onClick={() => onLayerSelect(layer.id)}
                                     className={`flex items-center gap-1.5 p-2.5 cursor-pointer transition-colors border-l-3 
-                                        ${isLayerActive 
-                                            ? (isGeo ? 'bg-blue-50/70 border-blue-500' : 'bg-yellow-50/70 border-yellow-500') 
-                                            : 'hover:bg-gray-50 border-transparent'
+                                        ${hasSelectedObjects
+                                            ? 'bg-amber-100/60 border-amber-500'
+                                            : isLayerActive 
+                                                ? (isGeo ? 'bg-blue-50/70 border-blue-500' : 'bg-yellow-50/70 border-yellow-500') 
+                                                : 'hover:bg-gray-50 border-transparent'
                                         }`}
                                 >
                                     <button 
@@ -231,13 +242,20 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                                     className="text-xs font-bold text-gray-900 bg-white border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none w-full"
                                                 />
                                             ) : (
-                                                <span 
-                                                    onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer); }}
-                                                    className={`text-xs truncate select-none ${isLayerActive ? 'font-bold text-gray-900' : 'text-gray-600'}`}
-                                                    title={isEn ? "Double click to rename" : "Doble clic para renombrar"}
-                                                >
-                                                    {layer.name}
-                                                </span>
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    <span 
+                                                        onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer); }}
+                                                        className={`text-xs truncate select-none ${hasSelectedObjects ? 'font-black text-amber-900' : isLayerActive ? 'font-bold text-gray-900' : 'text-gray-600'}`}
+                                                        title={isEn ? "Double click to rename" : "Doble clic para renombrar"}
+                                                    >
+                                                        {layer.name}
+                                                    </span>
+                                                    {hasSelectedObjects && (
+                                                        <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 font-bold tracking-tight shrink-0 shadow-2xs">
+                                                            {selectedInLayer.length} {isEn ? 'sel' : 'sel'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             )}
                                             <span className="text-[10px] text-gray-400 font-mono mt-0.5">
                                                 {objectCount} {objectCount === 1 ? (isEn ? 'object' : 'objeto') : (isEn ? 'objects' : 'objetos')}
@@ -245,18 +263,17 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                         </div>
                                     </div>
 
-                                    {/* Action: Move Selected Elements to this Layer */}
+                                    {/* Action: Move Selected Elements to this Layer (Icon only) */}
                                     {selectedIds.length > 0 && onMoveObjectsToLayer && (
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 onMoveObjectsToLayer(selectedIds, layer.id);
                                             }}
-                                            className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors border border-indigo-200/60 shadow-2xs"
+                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-xs font-bold flex items-center justify-center transition-colors border border-indigo-200/60 shadow-2xs shrink-0"
                                             title={isEn ? `Move ${selectedIds.length} selected items to this layer` : `Mover los ${selectedIds.length} elementos seleccionados a esta capa`}
                                         >
-                                            <FolderInput size={12} />
-                                            <span>{isEn ? 'Move here' : 'Mover aquí'}</span>
+                                            <FolderInput size={15} />
                                         </button>
                                     )}
 
@@ -281,7 +298,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                                     key={obj.id} 
                                                     onClick={() => onSelectObject(obj.id)}
                                                     className={`flex items-center gap-2 py-1.5 px-3 pl-7 text-[11px] group transition-colors border-b border-gray-100/60 last:border-0 ${
-                                                        isObjSelected ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-white text-gray-600'
+                                                        isObjSelected ? 'bg-amber-100/70 text-amber-900 font-bold border-l-2 border-l-amber-500' : 'hover:bg-white text-gray-600'
                                                     }`}
                                                 >
                                                     <button

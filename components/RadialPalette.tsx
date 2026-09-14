@@ -88,12 +88,13 @@ export const RadialPalette: React.FC<RadialPaletteProps> = ({
                 ]
             });
 
-            picker.on('color:change', (c: any) => {
+            // Use 'input:change' which ONLY fires on user gestures (NOT on programmatic picker.color.set)
+            picker.on('input:change', (c: any) => {
                 isSelfChange.current = true;
                 onColorChange(c.hexString);
                 setTimeout(() => {
                     isSelfChange.current = false;
-                }, 10);
+                }, 50);
             });
 
             pickerRef.current = picker;
@@ -113,7 +114,9 @@ export const RadialPalette: React.FC<RadialPaletteProps> = ({
     useEffect(() => {
         if (pickerRef.current && !isSelfChange.current && color) {
             try {
-                pickerRef.current.color.set(color);
+                if (pickerRef.current.color && pickerRef.current.color.hexString.toLowerCase() !== color.toLowerCase()) {
+                    pickerRef.current.color.set(color);
+                }
             } catch (_) {}
         }
     }, [color]);

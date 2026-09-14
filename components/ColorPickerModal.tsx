@@ -91,14 +91,15 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
                 ]
             });
 
-            picker.on('color:change', (c: any) => {
+            // Use 'input:change' which ONLY fires on user gestures (NOT on programmatic picker.color.set)
+            picker.on('input:change', (c: any) => {
                 isSelfChange.current = true;
                 const hex = c.hexString;
                 setCurrentColor(hex);
                 notifyChange(hex);
                 setTimeout(() => {
                     isSelfChange.current = false;
-                }, 10);
+                }, 50);
             });
 
             pickerRef.current = picker;
@@ -118,7 +119,9 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     useEffect(() => {
         if (pickerRef.current && !isSelfChange.current && currentColor) {
             try {
-                pickerRef.current.color.set(currentColor);
+                if (pickerRef.current.color && pickerRef.current.color.hexString.toLowerCase() !== currentColor.toLowerCase()) {
+                    pickerRef.current.color.set(currentColor);
+                }
             } catch (_) {}
         }
     }, [currentColor]);
@@ -127,7 +130,9 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
         setCurrentColor(paletteColor);
         if (pickerRef.current) {
             try {
-                pickerRef.current.color.set(paletteColor);
+                if (pickerRef.current.color && pickerRef.current.color.hexString.toLowerCase() !== paletteColor.toLowerCase()) {
+                    pickerRef.current.color.set(paletteColor);
+                }
             } catch (_) {}
         }
         notifyChange(paletteColor);

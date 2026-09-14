@@ -83,6 +83,30 @@ interface SceneProps {
     exportRef?: React.Ref<SceneExportRef>;
 }
 
+// 2D Point-in-Polygon (Raycasting Algorithm)
+function isPointInPolygon(point: { x: number; y: number }, vs: { x: number; y: number }[]): boolean {
+    const x = point.x, y = point.y;
+    let inside = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+        const xi = vs[i].x, yi = vs[i].y;
+        const xj = vs[j].x, yj = vs[j].y;
+        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+// 2D Line Segment Intersection Check
+function linesIntersect(
+    p1: { x: number; y: number }, p2: { x: number; y: number },
+    p3: { x: number; y: number }, p4: { x: number; y: number }
+): boolean {
+    const ccw = (A: { x: number; y: number }, B: { x: number; y: number }, C: { x: number; y: number }) => {
+        return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+    };
+    return (ccw(p1, p3, p4) !== ccw(p2, p3, p4)) && (ccw(p1, p2, p3) !== ccw(p1, p2, p4));
+}
+
 // Helper to generate DXF String
 const generateDXF = (objects: SceneObject[], threeGroup: THREE.Group) => {
     let s = "";
@@ -1298,6 +1322,13 @@ const SceneContent = ({
     const [cameraFov, setCameraFov] = useState(45);
     const [orthoZoom, setOrthoZoom] = useState(40);
 
+    // Safely update scene background color without unmounting/recreating R3F color node
+    useEffect(() => {
+        const c = new THREE.Color(backgroundColor || '#ffffff');
+        scene.background = c;
+        gl.setClearColor(c, 1);
+    }, [backgroundColor, scene, gl]);
+
     // Automatically transition back to perspective view when the user begins orbiting in 3D
     useEffect(() => {
         const controls = controlsRef.current;
@@ -1538,18 +1569,11 @@ const SceneContent = ({
 
                 // 35mm sensor equivalent focal length
                 const focal = Math.round(18 / Math.tan(THREE.MathUtils.degToRad(newFov / 2)));
-                let lensDesc = 'Lente Normal (50mm)';
-                if (focal <= 20) lensDesc = 'Ultra Gran Angular • Máxima Fuga';
-                else if (focal <= 28) lensDesc = 'Gran Angular • Fuga Pronunciada';
-                else if (focal <= 45) lensDesc = 'Angular Moderado';
-                else if (focal <= 65) lensDesc = 'Lente Normal (50mm)';
-                else if (focal <= 105) lensDesc = 'Retrato • Menor Fuga';
-                else lensDesc = 'Teleobjetivo • Perspectiva Plana';
 
                 if (onFOVDisplayChange) {
-                    onFOVDisplayChange(`Lente: ${focal}mm • ${lensDesc}`);
+                    onFOVDisplayChange(`${focal}mm`);
                     if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
-                    fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 1800);
+                    fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 1500);
                 }
             }
         } else if (camera instanceof THREE.OrthographicCamera) {
@@ -1559,7 +1583,7 @@ const SceneContent = ({
             camera.updateProjectionMatrix();
 
             if (onFOVDisplayChange) {
-                onFOVDisplayChange(`Zoom: ${newZoom.toFixed(1)}x`);
+                onFOVDisplayChange(`${newZoom.toFixed(1)}x`);
                 if (fovTimerRef.current) clearTimeout(fovTimerRef.current);
                 fovTimerRef.current = setTimeout(() => onFOVDisplayChange(null), 1500);
             }
@@ -1754,8 +1778,8 @@ const SceneContent = ({
         };
     }, [activeTool, camera, camType, gl, onStrokeComplete, currentBrushSmoothing]);
 
-    // --- DEDICATED CAD WINDOW / CROSSING BOX SELECTION LISTENER ---
-    const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+    // --- DEDICATED FREEHAND DRAWN STROKE SELECTION LISTENER (Zero flickering) ---
+    const lassoPointsRef = useRef<{ x: number; y: number }[]>([]);
 
     useEffect(() => {
         if (activeTool !== 'lasso') return;
@@ -1764,54 +1788,71 @@ const SceneContent = ({
         const originalCursor = dom.style.cursor;
         dom.style.cursor = 'crosshair';
 
+        const svgEl = document.getElementById('freehand-lasso-svg');
+        const polygonEl = document.getElementById('freehand-lasso-polygon');
+
+        const updateSvgOverlay = (pts: { x: number; y: number }[]) => {
+            if (!svgEl || !polygonEl) return;
+            if (pts.length > 1) {
+                svgEl.classList.remove('hidden');
+                polygonEl.setAttribute('points', pts.map(p => `${p.x},${p.y}`).join(' '));
+                const isWindow = pts[pts.length - 1].x >= pts[0].x;
+                polygonEl.setAttribute('fill', isWindow ? 'rgba(59, 130, 246, 0.12)' : 'rgba(37, 99, 235, 0.22)');
+                polygonEl.setAttribute('stroke', '#2563eb');
+                polygonEl.setAttribute('stroke-width', '2');
+                polygonEl.setAttribute('stroke-dasharray', isWindow ? '6 4' : 'none');
+            } else {
+                svgEl.classList.add('hidden');
+                polygonEl.setAttribute('points', '');
+            }
+        };
+
         const onDown = (e: PointerEvent) => {
             if (e.button !== 0) return;
 
             if (controlsRef.current) controlsRef.current.enabled = false;
             isLassoing.current = true;
-            selectionStartRef.current = { x: e.clientX, y: e.clientY };
-            const pt = { x: e.clientX, y: e.clientY };
-            setLassoPoints([pt, pt, pt, pt]);
-            if (onLassoPointsChange) onLassoPointsChange([pt, pt, pt, pt]);
+            lassoPointsRef.current = [{ x: e.clientX, y: e.clientY }];
+            updateSvgOverlay(lassoPointsRef.current);
         };
 
         const onMove = (e: PointerEvent) => {
-            if (!isLassoing.current || !selectionStartRef.current) return;
+            if (!isLassoing.current) return;
 
-            const start = selectionStartRef.current;
             const current = { x: e.clientX, y: e.clientY };
-            // Rectangular CAD selection box: Top-Left, Top-Right, Bottom-Right, Bottom-Left
-            const pts = [
-                { x: start.x, y: start.y },
-                { x: current.x, y: start.y },
-                { x: current.x, y: current.y },
-                { x: start.x, y: current.y }
-            ];
-            setLassoPoints(pts);
-            if (onLassoPointsChange) onLassoPointsChange(pts);
+            const pts = lassoPointsRef.current;
+            const last = pts[pts.length - 1];
+            // Only add point if moved more than 3 pixels to keep polyline clean and fast
+            if (!last || Math.hypot(current.x - last.x, current.y - last.y) >= 3) {
+                pts.push(current);
+                updateSvgOverlay(pts);
+            }
         };
 
         const onUp = (e: PointerEvent) => {
-            if (!isLassoing.current || !selectionStartRef.current) return;
+            if (!isLassoing.current) return;
             isLassoing.current = false;
             if (controlsRef.current) controlsRef.current.enabled = true;
 
-            const start = selectionStartRef.current;
-            const end = { x: e.clientX, y: e.clientY };
-            selectionStartRef.current = null;
+            const pts = lassoPointsRef.current;
+            lassoPointsRef.current = [];
+            updateSvgOverlay([]);
 
-            const minX = Math.min(start.x, end.x);
-            const maxX = Math.max(start.x, end.x);
-            const minY = Math.min(start.y, end.y);
-            const maxY = Math.max(start.y, end.y);
-            const isWindowSelection = end.x >= start.x; // Left to right = Window (dashed, strictly inside)
+            if (pts.length < 3) return;
 
-            // Ignore tiny micro-clicks (< 5px)
-            if (maxX - minX < 5 && maxY - minY < 5) {
-                setLassoPoints([]);
-                if (onLassoPointsChange) onLassoPointsChange([]);
-                return;
-            }
+            const xs = pts.map(p => p.x);
+            const ys = pts.map(p => p.y);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+
+            // Ignore tiny micro-gestures (< 6px)
+            if (maxX - minX < 6 && maxY - minY < 6) return;
+
+            // Left to right = Window (dashed, strictly all points inside stroke polygon)
+            // Right to left = Crossing (solid, any point inside or segment intersecting stroke)
+            const isWindowSelection = pts[pts.length - 1].x >= pts[0].x;
 
             const rect = dom.getBoundingClientRect();
             const toScreen = (worldPos: THREE.Vector3) => {
@@ -1823,7 +1864,13 @@ const SceneContent = ({
                 };
             };
 
-            const isPointInside = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+            const doesSegmentIntersectPolygon = (segA: { x: number; y: number }, segB: { x: number; y: number }) => {
+                for (let i = 0; i < pts.length; i++) {
+                    const nextIdx = (i + 1) % pts.length;
+                    if (linesIntersect(segA, segB, pts[i], pts[nextIdx])) return true;
+                }
+                return false;
+            };
 
             const selected: string[] = [];
             objects.forEach(obj => {
@@ -1835,23 +1882,24 @@ const SceneContent = ({
                     if (sPoints.length === 0) return;
 
                     if (isWindowSelection) {
-                        // Left to right: ALL points must be strictly inside the window
-                        if (sPoints.every(s => s.inFrustum && isPointInside(s.x, s.y))) {
+                        // Left-to-Right (Window): ALL points must be in frustum and inside drawn polygon
+                        if (sPoints.every(s => s.inFrustum && isPointInPolygon(s, pts))) {
                             selected.push(obj.id);
                         }
                     } else {
-                        // Right to left: ANY point inside OR bounding box overlaps
-                        const anyInside = sPoints.some(s => s.inFrustum && isPointInside(s.x, s.y));
+                        // Right-to-Left (Crossing): ANY point inside polygon OR any stroke segment intersects polygon edge
+                        const anyInside = sPoints.some(s => s.inFrustum && isPointInPolygon(s, pts));
                         if (anyInside) {
                             selected.push(obj.id);
                         } else {
-                            const strokeMinX = Math.min(...sPoints.map(p => p.x));
-                            const strokeMaxX = Math.max(...sPoints.map(p => p.x));
-                            const strokeMinY = Math.min(...sPoints.map(p => p.y));
-                            const strokeMaxY = Math.max(...sPoints.map(p => p.y));
-                            if (strokeMinX <= maxX && strokeMaxX >= minX && strokeMinY <= maxY && strokeMaxY >= minY) {
-                                selected.push(obj.id);
+                            let intersects = false;
+                            for (let i = 0; i < sPoints.length - 1; i++) {
+                                if (doesSegmentIntersectPolygon(sPoints[i], sPoints[i + 1])) {
+                                    intersects = true;
+                                    break;
+                                }
                             }
+                            if (intersects) selected.push(obj.id);
                         }
                     }
                 } else {
@@ -1872,21 +1920,21 @@ const SceneContent = ({
                     const sCenter = toScreen(objPos);
 
                     if (isWindowSelection) {
-                        // Window: ALL 8 corners must be strictly inside
-                        if (corners.every(c => c.inFrustum && isPointInside(c.x, c.y))) {
+                        // Window: ALL 8 corners must be inside drawn polygon
+                        if (corners.every(c => c.inFrustum && isPointInPolygon(c, pts))) {
                             selected.push(obj.id);
                         }
                     } else {
-                        // Crossing: ANY corner, center inside or bounding box overlaps
-                        const anyCorner = corners.some(c => c.inFrustum && isPointInside(c.x, c.y));
-                        const centerIn = sCenter.inFrustum && isPointInside(sCenter.x, sCenter.y);
+                        // Crossing: ANY corner inside, center inside, or bounding box overlaps with polygon
+                        const anyCorner = corners.some(c => c.inFrustum && isPointInPolygon(c, pts));
+                        const centerIn = sCenter.inFrustum && isPointInPolygon(sCenter, pts);
                         const oMinX = Math.min(...corners.map(c => c.x));
                         const oMaxX = Math.max(...corners.map(c => c.x));
                         const oMinY = Math.min(...corners.map(c => c.y));
                         const oMaxY = Math.max(...corners.map(c => c.y));
                         const bboxOverlaps = oMinX <= maxX && oMaxX >= minX && oMinY <= maxY && oMaxY >= minY;
 
-                        if (anyCorner || centerIn || bboxOverlaps) {
+                        if (anyCorner || centerIn || (bboxOverlaps && doesSegmentIntersectPolygon({ x: oMinX, y: oMinY }, { x: oMaxX, y: oMaxY }))) {
                             selected.push(obj.id);
                         }
                     }
@@ -1896,8 +1944,6 @@ const SceneContent = ({
             if (selected.length > 0) {
                 onLassoSelect(selected);
             }
-            setLassoPoints([]);
-            if (onLassoPointsChange) onLassoPointsChange([]);
         };
 
         dom.addEventListener('pointerdown', onDown);
@@ -1910,9 +1956,9 @@ const SceneContent = ({
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
             if (controlsRef.current) controlsRef.current.enabled = true;
-            if (onLassoPointsChange) onLassoPointsChange([]);
+            updateSvgOverlay([]);
         };
-    }, [activeTool, camera, gl, objects, onLassoSelect, onLassoPointsChange]);
+    }, [activeTool, camera, gl, objects, onLassoSelect]);
 
     const handlePointerDown = useCallback((e: any) => {
         // Handled by dedicated screen listeners
@@ -2084,7 +2130,6 @@ const SceneContent = ({
 
     return (
         <>
-            <color attach="background" args={[backgroundColor || '#ffffff']} />
             <GestureHandler 
                 onSnapView={handleSnapView} 
                 onAdjustFOV={handleAdjustFOV}
@@ -2420,7 +2465,6 @@ const SceneContent = ({
 
 export const SceneCanvas = (props: SceneProps) => {
     const objectsGroupRef = useRef<THREE.Group>(null);
-    const [screenLassoPoints, setScreenLassoPoints] = useState<{ x: number; y: number }[]>([]);
     const [fovBadgeText, setFovBadgeText] = useState<string | null>(null);
 
     return (
@@ -2429,10 +2473,6 @@ export const SceneCanvas = (props: SceneProps) => {
                 <SceneContent 
                     {...props} 
                     objectsGroupRef={objectsGroupRef} 
-                    onLassoPointsChange={(pts) => {
-                        setScreenLassoPoints(pts);
-                        if (props.onLassoPointsChange) props.onLassoPointsChange(pts);
-                    }}
                     onFOVDisplayChange={(txt) => {
                         setFovBadgeText(txt);
                         if (props.onFOVDisplayChange) props.onFOVDisplayChange(txt);
@@ -2440,18 +2480,20 @@ export const SceneCanvas = (props: SceneProps) => {
                 />
             </Canvas>
 
-            {/* CAD BOX SELECTION 2D SCREEN OVERLAY */}
-            {props.activeTool === 'lasso' && screenLassoPoints.length > 1 && (
-                <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
-                    <polygon
-                        points={screenLassoPoints.map(p => `${p.x},${p.y}`).join(' ')}
-                        fill={screenLassoPoints[1] && screenLassoPoints[1].x >= screenLassoPoints[0].x ? "rgba(59, 130, 246, 0.12)" : "rgba(37, 99, 235, 0.22)"}
-                        stroke="#2563eb"
-                        strokeWidth="2"
-                        strokeDasharray={screenLassoPoints[1] && screenLassoPoints[1].x >= screenLassoPoints[0].x ? "6 4" : "none"}
-                    />
-                </svg>
-            )}
+            {/* FREEHAND STROKE SELECTION 2D SCREEN OVERLAY (Zero flickering via direct DOM updates) */}
+            <svg 
+                id="freehand-lasso-svg" 
+                className="absolute inset-0 w-full h-full pointer-events-none z-30 hidden"
+            >
+                <polygon
+                    id="freehand-lasso-polygon"
+                    points=""
+                    fill="rgba(37, 99, 235, 0.18)"
+                    stroke="#2563eb"
+                    strokeWidth="2"
+                    strokeDasharray="none"
+                />
+            </svg>
 
             {/* CAMERA FOV / LENS FLOATING BADGE */}
             {fovBadgeText && (

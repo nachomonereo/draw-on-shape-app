@@ -147,9 +147,9 @@ export default function App() {
     const [projectName, setProjectName] = useState("Untitled Project");
     const [isEditingName, setIsEditingName] = useState(false);
     
-    // Language State ('es' | 'en')
+    // Language State ('es' | 'en') - Default to 'en' (English)
     const [language, setLanguage] = useState<Language>(() => {
-        return (localStorage.getItem('draw_on_shape_lang') as Language) || 'es';
+        return (localStorage.getItem('draw_on_shape_lang') as Language) || 'en';
     });
 
     const handleLanguageChange = (newLang: Language) => {
