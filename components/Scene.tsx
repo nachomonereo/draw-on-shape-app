@@ -1626,9 +1626,11 @@ const SceneContent = ({
 
         const dom = gl.domElement;
         const originalCursor = dom.style.cursor;
+        const originalTouchAction = dom.style.touchAction;
         dom.style.cursor = 'crosshair';
+        dom.style.touchAction = 'none';
 
-        const getRayPoint = (clientX: number, clientY: number) => {
+        const getRayPoint = (clientX: number, clientY: number): THREE.Vector3 => {
             const rect = dom.getBoundingClientRect();
             const mouse = new THREE.Vector2(
                 ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -1637,24 +1639,49 @@ const SceneContent = ({
             const ray = new THREE.Raycaster();
             ray.setFromCamera(mouse, camera);
 
-            const cPos = camera.position.clone();
             const vForward = new THREE.Vector3();
             camera.getWorldDirection(vForward);
-            const d = controlsRef.current ? cPos.distanceTo(controlsRef.current.target) : 10;
-            const O_p = cPos.clone().addScaledVector(vForward, d);
-            const N_p = vForward.clone();
 
-            const D_ray = ray.ray.direction.clone().normalize();
-            const denom = D_ray.dot(N_p);
-            if (Math.abs(denom) > 1e-6) {
-                const t = O_p.clone().sub(cPos).dot(N_p) / denom;
-                return cPos.clone().addScaledVector(D_ray, t);
+            // User requirement: In flat/canonical view, project onto the respective plane passing through (0,0,0)
+            const absX = Math.abs(vForward.x);
+            const absY = Math.abs(vForward.y);
+            const absZ = Math.abs(vForward.z);
+
+            const planeNormal = new THREE.Vector3();
+            if (absY > 0.85) {
+                // Top / Bottom flat view: XZ plane passing through (0, 0, 0)
+                planeNormal.set(0, 1, 0);
+            } else if (absZ > 0.85) {
+                // Front / Back flat view: XY plane passing through (0, 0, 0)
+                planeNormal.set(0, 0, 1);
+            } else if (absX > 0.85) {
+                // Right / Left flat view: YZ plane passing through (0, 0, 0)
+                planeNormal.set(1, 0, 0);
+            } else {
+                // Perspective / oblique view: plane passing through (0, 0, 0) facing the camera
+                planeNormal.copy(vForward).negate();
             }
-            return O_p.clone();
+
+            const plane = new THREE.Plane();
+            plane.setFromNormalAndCoplanarPoint(planeNormal, new THREE.Vector3(0, 0, 0));
+
+            const targetPt = new THREE.Vector3();
+            const hit = ray.ray.intersectPlane(plane, targetPt);
+            if (hit) {
+                // Pin the orthogonal axis exactly to 0 for exact mathematical precision
+                if (absY > 0.85) hit.y = 0;
+                else if (absZ > 0.85) hit.z = 0;
+                else if (absX > 0.85) hit.x = 0;
+                return hit.clone();
+            }
+
+            // Fallback if ray is parallel to plane
+            const d = controlsRef.current ? camera.position.distanceTo(controlsRef.current.target) : 10;
+            return ray.ray.origin.clone().addScaledVector(ray.ray.direction, d);
         };
 
         const onDown = (e: PointerEvent) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
 
             if (controlsRef.current) controlsRef.current.enabled = false;
             isDrawing.current = true;
@@ -1668,7 +1695,7 @@ const SceneContent = ({
 
             const pt = getRayPoint(e.clientX, e.clientY);
             const lastP = currentPoints.current[currentPoints.current.length - 1];
-            if (!lastP || lastP.distanceTo(pt) > 0.03) {
+            if (!lastP || lastP.distanceTo(pt) > 0.02) {
                 currentPoints.current.push(pt);
                 setPreviewPath([...currentPoints.current]);
             }
@@ -1703,6 +1730,10 @@ const SceneContent = ({
                 }
                 const cameraDir = new THREE.Vector3();
                 camera.getWorldDirection(cameraDir);
+                if (Math.abs(cameraDir.y) > 0.85) cameraDir.set(0, cameraDir.y > 0 ? 1 : -1, 0);
+                else if (Math.abs(cameraDir.z) > 0.85) cameraDir.set(0, 0, cameraDir.z > 0 ? 1 : -1);
+                else if (Math.abs(cameraDir.x) > 0.85) cameraDir.set(cameraDir.x > 0 ? 1 : -1, 0, 0);
+
                 onStrokeComplete(finalPoints, cameraDir);
             }
             currentPoints.current = [];
@@ -1715,12 +1746,13 @@ const SceneContent = ({
 
         return () => {
             dom.style.cursor = originalCursor;
+            dom.style.touchAction = originalTouchAction;
             dom.removeEventListener('pointerdown', onDown);
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
             if (controlsRef.current) controlsRef.current.enabled = true;
         };
-    }, [activeTool, camera, gl, onStrokeComplete, currentBrushSmoothing]);
+    }, [activeTool, camera, camType, gl, onStrokeComplete, currentBrushSmoothing]);
 
     // --- DEDICATED CAD WINDOW / CROSSING BOX SELECTION LISTENER ---
     const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -2372,7 +2404,7 @@ const SceneContent = ({
                 </mesh>
             )}
 
-            <OrbitControls ref={controlsRef} makeDefault minPolarAngle={0} maxPolarAngle={Math.PI} enableDamping dampingFactor={0.1} />
+            <OrbitControls ref={controlsRef} makeDefault minPolarAngle={0} maxPolarAngle={Math.PI} enableDamping dampingFactor={0.1} enabled={!isDrawingMode} />
             
             {/* 100% OFFLINE STUDIO LIGHTING RIG (Zero network fetch / No potsdamer_platz_1k.hdr error / No tainted canvas) */}
             <ambientLight intensity={0.75} />

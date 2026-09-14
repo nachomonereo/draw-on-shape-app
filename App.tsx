@@ -2162,24 +2162,24 @@ export default function App() {
                                     onHover={setHoverInfo} onLeave={() => setHoverInfo(null)}
                                  >
                                      <div className="flex gap-1">
-                                         <button onClick={() => { handleAddObject('box'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Cubo"><Icons.Box size={18} /></button>
-                                         <button onClick={() => { handleAddObject('cylinder'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Cilindro"><Icons.Cylinder size={18} /></button>
-                                         <button onClick={() => { handleAddObject('sphere'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Esfera"><Icons.Circle size={18} /></button>
-                                         <button onClick={() => { handleAddObject('plane'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title="Plano (Cuadrado)"><Icons.Square size={18} /></button>
-                                         <button 
-                                             onClick={() => { handleToolChange('draw-plane'); setInstruction("Dibujar curva para Plano (Curve Guide)"); }} 
-                                             className={`p-2 rounded-lg ${activeTool === 'draw-plane' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
-                                             title="Plano (Curve Guide)"
-                                         >
-                                             <Icons.Spline size={18} />
-                                         </button>
-                                         <button 
-                                             onClick={startLoftTool} 
-                                             className={`p-2 rounded-lg ${activeTool === 'loft-step-1' || activeTool === 'loft-step-2' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
-                                             title="Loft"
-                                         >
-                                             <Icons.Loft size={18} />
-                                         </button>
+                                          <button onClick={() => { handleAddObject('box'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title={language === 'en' ? "Box" : "Cubo"}><Icons.Box size={18} /></button>
+                                          <button onClick={() => { handleAddObject('cylinder'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title={language === 'en' ? "Cylinder" : "Cilindro"}><Icons.Cylinder size={18} /></button>
+                                          <button onClick={() => { handleAddObject('sphere'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title={language === 'en' ? "Sphere" : "Esfera"}><Icons.Circle size={18} /></button>
+                                          <button onClick={() => { handleAddObject('plane'); handleToolChange('select'); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" title={language === 'en' ? "Plane (Square)" : "Plano (Cuadrado)"}><Icons.Square size={18} /></button>
+                                          <button 
+                                              onClick={() => { handleToolChange('draw-plane'); setInstruction(language === 'en' ? "Draw curve for Planar Wall (Curve Guide)" : "Dibujar curva para Plano (Curve Guide)"); }} 
+                                              className={`p-2 rounded-lg ${activeTool === 'draw-plane' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
+                                              title={language === 'en' ? "Plane (Curve Guide)" : "Plano (Curve Guide)"}
+                                          >
+                                              <Icons.Spline size={18} />
+                                          </button>
+                                          <button 
+                                              onClick={startLoftTool} 
+                                              className={`p-2 rounded-lg ${activeTool === 'loft-step-1' || activeTool === 'loft-step-2' ? 'bg-blue-50 text-moda-3' : 'hover:bg-gray-100 text-gray-600'}`} 
+                                              title="Loft"
+                                          >
+                                              <Icons.Loft size={18} />
+                                          </button>
                                      </div>
                                  </ToolbarItem>
                               </div>
