@@ -202,7 +202,7 @@ export default function App() {
     const [isBgMenuOpen, setIsBgMenuOpen] = useState(false);
     const [isBgColorPickerOpen, setIsBgColorPickerOpen] = useState(false);
     const [isSelectionColorPickerOpen, setIsSelectionColorPickerOpen] = useState(false);
-    const [isLayersPanelCollapsed, setIsLayersPanelCollapsed] = useState(false);
+    const [isLayersPanelCollapsed, setIsLayersPanelCollapsed] = useState(true);
 
     // Brush Presets
     const [brushPresets, setBrushPresets] = useState<BrushPreset[]>([
@@ -1978,44 +1978,30 @@ export default function App() {
                  <button onClick={() => setShowUI(!showUI)} className={`p-2.5 rounded-full border bg-white shadow-sm transition-colors ${!showUI ? 'bg-yellow-50 text-moda-4 border-yellow-200' : 'text-gray-400'}`} title={showUI ? "Hide UI" : "Show UI"}><LayoutTemplate size={20} /></button>
             </div>
 
-            {showUI && (
-                isLayersPanelCollapsed ? (
-                    <div className="absolute left-6 bottom-8 z-20 animate-in fade-in duration-200 pointer-events-none">
-                        <button
-                            onClick={() => setIsLayersPanelCollapsed(false)}
-                            className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 text-gray-700 h-12 px-3.5 rounded-2xl shadow-xl hover:bg-gray-50 flex items-center gap-2 group transition-all"
-                            title={language === 'en' ? "Show Layers" : "Mostrar Capas"}
-                        >
-                            <LayersIcon size={20} className="text-gray-700 group-hover:text-blue-600 transition-colors" />
-                            <span className="text-xs font-semibold text-gray-600 group-hover:text-blue-600">{language === 'en' ? 'Layers' : 'Capas'}</span>
-                            <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
-                        </button>
+            {showUI && !isLayersPanelCollapsed && (
+                <div className="absolute left-4 top-28 bottom-32 w-64 z-10 pointer-events-none animate-in slide-in-from-left-4 duration-300">
+                    <div className="bg-white/95 backdrop-blur border border-gray-200 rounded-2xl h-full shadow-xl overflow-hidden pointer-events-auto">
+                        <LayersPanel 
+                            layers={layers} 
+                            objects={sceneObjects} 
+                            activeLayerId={activeLayerId} 
+                            areGeometryLayersVisible={areGeometryVisible} 
+                            onToggleGlobalGeometry={() => setAreGeometryVisible(!areGeometryVisible)} 
+                            onLayerSelect={setActiveLayerId} 
+                            onToggleVisibility={id => setLayers(layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l))} 
+                            onToggleLock={id => setLayers(layers.map(l => l.id === id ? { ...l, locked: !l.locked } : l))} 
+                            onAddLayer={t => { const n:Layer = {id:generateId(), name:`Layer ${layers.length+1}`, visible:true, locked:false, type:t}; setLayers([n, ...layers]); setActiveLayerId(n.id); }} 
+                            onDeleteLayer={id => { if (layers.length > 1) { setLayers(layers.filter(l => l.id !== id)); addToHistory(sceneObjects.filter(o => o.layerId !== id)); if (activeLayerId === id) setActiveLayerId(layers[0].id); } }} 
+                            onRenameLayer={(id, n) => setLayers(layers.map(l => l.id === id ? { ...l, name: n } : l))} 
+                            onDeleteObject={id => addToHistory(sceneObjects.filter(o => o.id !== id))} 
+                            onSelectObject={id => { setSelectedIds([id]); handleToolChange('select'); }} 
+                            onToggleObjectVisibility={id => setSceneObjects(sceneObjects.map(o => o.id === id ? {...o, visible: o.visible===false} : o))} 
+                            selectedIds={selectedIds} 
+                            onMoveObjectsToLayer={handleMoveObjectsToLayer}
+                            onCollapse={() => setIsLayersPanelCollapsed(true)}
+                        />
                     </div>
-                ) : (
-                    <div className="absolute left-4 top-28 bottom-32 w-64 z-10 pointer-events-none animate-in slide-in-from-left-4 duration-300">
-                        <div className="bg-white/95 backdrop-blur border border-gray-200 rounded-2xl h-full shadow-xl overflow-hidden pointer-events-auto">
-                            <LayersPanel 
-                                layers={layers} 
-                                objects={sceneObjects} 
-                                activeLayerId={activeLayerId} 
-                                areGeometryLayersVisible={areGeometryVisible} 
-                                onToggleGlobalGeometry={() => setAreGeometryVisible(!areGeometryVisible)} 
-                                onLayerSelect={setActiveLayerId} 
-                                onToggleVisibility={id => setLayers(layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l))} 
-                                onToggleLock={id => setLayers(layers.map(l => l.id === id ? { ...l, locked: !l.locked } : l))} 
-                                onAddLayer={t => { const n:Layer = {id:generateId(), name:`Layer ${layers.length+1}`, visible:true, locked:false, type:t}; setLayers([n, ...layers]); setActiveLayerId(n.id); }} 
-                                onDeleteLayer={id => { if (layers.length > 1) { setLayers(layers.filter(l => l.id !== id)); addToHistory(sceneObjects.filter(o => o.layerId !== id)); if (activeLayerId === id) setActiveLayerId(layers[0].id); } }} 
-                                onRenameLayer={(id, n) => setLayers(layers.map(l => l.id === id ? { ...l, name: n } : l))} 
-                                onDeleteObject={id => addToHistory(sceneObjects.filter(o => o.id !== id))} 
-                                onSelectObject={id => { setSelectedIds([id]); handleToolChange('select'); }} 
-                                onToggleObjectVisibility={id => setSceneObjects(sceneObjects.map(o => o.id === id ? {...o, visible: o.visible===false} : o))} 
-                                selectedIds={selectedIds} 
-                                onMoveObjectsToLayer={handleMoveObjectsToLayer}
-                                onCollapse={() => setIsLayersPanelCollapsed(true)}
-                            />
-                        </div>
-                    </div>
-                )
+                </div>
             )}
 
             <div className="absolute inset-0 z-0">
@@ -2254,6 +2240,17 @@ export default function App() {
                                         </button>
                                     </div>
                                 </ToolbarItem>
+
+                                <div className="h-6 w-[1px] bg-gray-200" />
+                                
+                                <ToolbarItem 
+                                    active={!isLayersPanelCollapsed} 
+                                    onClick={() => setIsLayersPanelCollapsed(!isLayersPanelCollapsed)} 
+                                    icon={Icons.Layers} 
+                                    tooltipText={language === 'en' ? "Layers" : "Capas"} 
+                                    onHover={setHoverInfo} 
+                                    onLeave={() => setHoverInfo(null)}
+                                />
                              </div>
 
                              {/* SEPARATED SHAPES (CREATE) BUTTON */}

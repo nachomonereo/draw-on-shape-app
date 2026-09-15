@@ -529,26 +529,24 @@ const ExtrusionComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isS
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
             castShadow receiveShadow>
-             {(() => {
-                 const isSolid = (material.opacity ?? 1) >= 0.99;
-                 return (
-                     <meshStandardMaterial 
-                         color={material.color} 
-                         roughness={0.5} 
-                         metalness={0.1} 
-                         transparent={!isSolid} 
-                         opacity={material.opacity ?? 1} 
-                         depthWrite={isSolid} 
-                         side={THREE.DoubleSide} 
-                     />
-                 );
-             })()}
-             {isSelected && (
-                 <lineSegments renderOrder={10}>
-                     <edgesGeometry args={[geometry]} />
-                     <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-                 </lineSegments>
-             )}
+              {(() => {
+                  const displayColor = isSelected ? '#FFE600' : material.color;
+                  const displayOpacity = isSelected ? 0.45 : (material.opacity ?? 1);
+                  const isSolid = !isSelected && displayOpacity >= 0.99;
+                  return (
+                      <meshStandardMaterial 
+                          color={displayColor} 
+                          emissive={isSelected ? '#FFE600' : '#000000'}
+                          emissiveIntensity={isSelected ? 0.35 : 0}
+                          roughness={0.5} 
+                          metalness={0.1} 
+                          transparent={!isSolid} 
+                          opacity={displayOpacity} 
+                          depthWrite={isSolid} 
+                          side={THREE.DoubleSide} 
+                      />
+                  );
+              })()}
         </mesh>
     );
 });
@@ -635,20 +633,26 @@ const LoftComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; allObjec
     }, [data.loftData, data.position.x, data.position.y, data.position.z, allObjects]);
 
     if (!geometry) return null;
-    const isSolid = (data.material.opacity ?? 1) >= 0.99;
+    const displayColor = isSelected ? '#FFE600' : data.material.color;
+    const displayOpacity = isSelected ? 0.45 : (data.material.opacity ?? 1);
+    const isSolid = !isSelected && displayOpacity >= 0.99;
     return (
         <mesh ref={localRef} geometry={geometry} onClick={!isLocked ? onSelect : undefined} userData={{ id: data.id, type: 'loft', layerId: data.layerId }}
              position={[data.position.x, data.position.y, data.position.z]}
              rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
              scale={[data.scale.x, data.scale.y, data.scale.z]}
              castShadow receiveShadow>
-             <meshStandardMaterial color={data.material.color} roughness={0.5} metalness={0.1} transparent={!isSolid} opacity={data.material.opacity ?? 1} depthWrite={isSolid} side={THREE.DoubleSide} />
-             {isSelected && (
-                 <lineSegments renderOrder={10}>
-                     <edgesGeometry args={[geometry]} />
-                     <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-                 </lineSegments>
-             )}
+             <meshStandardMaterial 
+                 color={displayColor} 
+                 emissive={isSelected ? '#FFE600' : '#000000'}
+                 emissiveIntensity={isSelected ? 0.35 : 0}
+                 roughness={0.5} 
+                 metalness={0.1} 
+                 transparent={!isSolid} 
+                 opacity={displayOpacity} 
+                 depthWrite={isSolid} 
+                 side={THREE.DoubleSide} 
+             />
         </mesh>
     );
 });
@@ -783,19 +787,15 @@ const STLModel = forwardRef<THREE.Mesh, { url: string; data: SceneObject; isSele
         return (
             <mesh ref={ref} geometry={geometry} castShadow receiveShadow>
                 <meshStandardMaterial 
-                    color={data.material?.color || "#E0E0E0"} 
+                    color={isSelected ? '#FFE600' : (data.material?.color || "#E0E0E0")} 
+                    emissive={isSelected ? '#FFE600' : '#000000'}
+                    emissiveIntensity={isSelected ? 0.35 : 0}
                     roughness={0.6} 
                     metalness={0.1} 
                     transparent={true} 
-                    opacity={data.material?.opacity ?? 0.75} 
+                    opacity={isSelected ? 0.45 : (data.material?.opacity ?? 0.75)} 
                     side={THREE.DoubleSide} 
                 />
-                {isSelected && (
-                    <lineSegments renderOrder={10}>
-                        <wireframeGeometry args={[geometry]} />
-                        <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-                    </lineSegments>
-                )}
             </mesh>
         );
     } catch (e) {
@@ -811,11 +811,13 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
             
             // Neutral base geometry material without textures to allow sketching on top
             const neutralMat = new THREE.MeshStandardMaterial({
-                color: data.material?.color || '#E0E0E0',
+                color: isSelected ? '#FFE600' : (data.material?.color || '#E0E0E0'),
+                emissive: isSelected ? new THREE.Color('#FFE600') : new THREE.Color('#000000'),
+                emissiveIntensity: isSelected ? 0.35 : 0,
                 roughness: 0.6,
                 metalness: 0.1,
                 transparent: true,
-                opacity: data.material?.opacity ?? 0.75,
+                opacity: isSelected ? 0.45 : (data.material?.opacity ?? 0.75),
                 side: THREE.DoubleSide
             });
 
@@ -845,12 +847,11 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
             }
 
             return clone;
-        }, [obj, data.material?.color, data.material?.opacity]);
+        }, [obj, data.material?.color, data.material?.opacity, isSelected]);
 
         return (
             <group ref={ref}>
                 <primitive object={normalizedObj} />
-                {isSelected && <ModelWireframe object={normalizedObj} color="#FACC15" />}
             </group>
         );
     } catch (e) {
@@ -860,30 +861,8 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
 
 import { createPortal } from '@react-three/fiber';
 
-// Helper to apply Wireframe to all meshes in an imported model
-const ModelWireframe = ({ object, color = "#FACC15" }: { object: THREE.Object3D, color?: string }) => {
-    const [meshes, setMeshes] = useState<THREE.Mesh[]>([]);
-    
-    useEffect(() => {
-        const list: THREE.Mesh[] = [];
-        object.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).geometry) list.push(child as THREE.Mesh);
-        });
-        setMeshes(list);
-    }, [object]);
-
-    return (
-        <>
-            {meshes.map((mesh, idx) => createPortal(
-                <lineSegments key={idx} renderOrder={10}>
-                    <wireframeGeometry args={[mesh.geometry]} />
-                    <lineBasicMaterial color={color} depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-                </lineSegments>,
-                mesh
-            ))}
-        </>
-    );
-};
+// ModelWireframe no longer renders lines per user request
+const ModelWireframe = (_props: any) => null;
 
 const GLTFModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSelected: boolean }>(({ url, data, isSelected }, ref) => {
     try {
@@ -902,9 +881,17 @@ const GLTFModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSe
                         child.material.map.anisotropy = gl.capabilities.getMaxAnisotropy();
                         child.material.map.minFilter = THREE.LinearMipmapLinearFilter;
                         child.material.map.magFilter = THREE.LinearFilter;
-                        child.material.color.set(0xffffff); 
+                        child.material.color.set(isSelected ? '#FFE600' : 0xffffff); 
                     } else {
-                        child.material.color.set(data.material.color);
+                        child.material.color.set(isSelected ? '#FFE600' : data.material.color);
+                    }
+                    if (isSelected) {
+                        child.material.transparent = true;
+                        child.material.opacity = 0.45;
+                        if (child.material.emissive) {
+                            child.material.emissive.set('#FFE600');
+                            child.material.emissiveIntensity = 0.35;
+                        }
                     }
                 }
             });
@@ -920,7 +907,6 @@ const GLTFModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSe
         return (
             <group ref={ref}>
                 <primitive object={scene} />
-                {isSelected && <ModelWireframe object={scene} />}
             </group>
         );
     } catch (e) {
@@ -947,9 +933,13 @@ const RhinoModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isS
                     // We apply our override color only if it lacks a texture, OR if we want to force uniformity.
                     // For drawing purposes, ensuring it's a mesh is key.
                     if (!child.material.map) {
-                        child.material.color.set(data.material.color);
+                        child.material.color.set(isSelected ? '#FFE600' : data.material.color);
                         child.material.transparent = true;
-                        child.material.opacity = data.material.opacity ?? 0.8;
+                        child.material.opacity = isSelected ? 0.45 : (data.material.opacity ?? 0.8);
+                        if (child.material.emissive) {
+                            child.material.emissive.set(isSelected ? '#FFE600' : '#000000');
+                            child.material.emissiveIntensity = isSelected ? 0.35 : 0;
+                        }
                     }
                 }
             });
@@ -966,7 +956,6 @@ const RhinoModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isS
         return (
             <group ref={ref}>
                 <primitive object={scene} />
-                {isSelected && <ModelWireframe object={scene} />}
             </group>
         );
     } catch(e) {
@@ -1090,13 +1079,6 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
         }
     }, [type, params]);
 
-    const wireframeGeometry = useMemo(() => {
-        if (type === 'box' || type === 'plane') {
-            return new THREE.EdgesGeometry(geometry);
-        }
-        return new THREE.WireframeGeometry(geometry);
-    }, [geometry, type]);
-
     useFrame((state) => {
         if (!localRef.current) return;
         const dist = state.camera.position.distanceTo(localRef.current.position);
@@ -1109,7 +1091,7 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
         
         const mat = localRef.current.material as THREE.MeshStandardMaterial;
         if (mat) {
-             const base = data.material.opacity ?? 0.8;
+             const base = isSelected ? 0.45 : (data.material.opacity ?? 0.8);
              const target = base * factor;
              if (Math.abs(mat.opacity - target) > 0.01) {
                  mat.opacity = target;
@@ -1131,31 +1113,23 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
             receiveShadow
         >
              {(() => {
-                 const isSolid = (material.opacity ?? 1) >= 0.99;
+                 const displayColor = isSelected ? '#FFE600' : material.color;
+                 const displayOpacity = isSelected ? 0.45 : (material.opacity ?? 1);
+                 const isSolid = !isSelected && displayOpacity >= 0.99;
                  return (
                      <meshStandardMaterial 
-                         color={material.color} 
-                         roughness={material.roughness} 
-                         metalness={material.metalness} 
+                         color={displayColor} 
+                         emissive={isSelected ? '#FFE600' : '#000000'}
+                         emissiveIntensity={isSelected ? 0.35 : 0}
+                         roughness={isSelected ? 0.3 : material.roughness} 
+                         metalness={isSelected ? 0.05 : material.metalness} 
                          transparent={!isSolid} 
-                         opacity={material.opacity ?? 1}
-                         depthWrite={true}
+                         opacity={displayOpacity}
+                         depthWrite={isSolid}
                          side={THREE.DoubleSide}
                      />
                  );
              })()}
-            {isSelected && wireframeGeometry && (
-                <lineSegments renderOrder={10}>
-                    <primitive object={wireframeGeometry} attach="geometry" />
-                    <lineBasicMaterial 
-                        color="#FACC15" 
-                        depthTest={true} 
-                        polygonOffset={true} 
-                        polygonOffsetFactor={-2} 
-                        polygonOffsetUnits={-2} 
-                    />
-                </lineSegments>
-            )}
         </mesh>
     );
 });
@@ -2247,9 +2221,11 @@ const SceneContent = ({
         }
     }, [activeTool, onStrokeComplete, camera]);
 
-    // Background interaction: preserve selection when touching or panning the background
+    // Background interaction: deselect when touching empty screen (donde no hay objeto)
     const handleMiss = (_e: any) => {
-        // Intentionally keep selection active when interacting with background
+        if (activeTool === 'select' && !isTransformingRef.current && !isDrawing.current && !isLassoing.current) {
+            onSelect(null);
+        }
     };
 
     const selectedObject = selectedIds.length === 1 ? objects.find(o => o.id === selectedIds[0]) : null;
@@ -2540,27 +2516,7 @@ const SceneContent = ({
                                 onTransformEnd();
                             }}
                             onChange={() => {
-                                if (!multiProxyMeshRef.current || !onTransformMultiple) return;
-                                if (!isTransformingRef.current) {
-                                    isTransformingRef.current = true;
-                                    if (controlsRef.current) controlsRef.current.enabled = false;
-                                    if (multiCentroid && !initialCentroidRef.current) {
-                                        initialCentroidRef.current = multiCentroid.clone();
-                                        const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
-                                        selectedIds.forEach(id => {
-                                            const obj = objects.find(o => o.id === id);
-                                            if (obj) {
-                                                map.set(id, {
-                                                    position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
-                                                    rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
-                                                    scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
-                                                });
-                                            }
-                                        });
-                                        initialMultiStatesRef.current = map;
-                                    }
-                                    onTransformStart();
-                                }
+                                if (!isTransformingRef.current || !multiProxyMeshRef.current || !onTransformMultiple) return;
                                 const initialCentroid = initialCentroidRef.current;
                                 if (!initialCentroid) return;
 
