@@ -627,10 +627,26 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                             key={comp.id}
                                             className="bg-white border border-gray-200 rounded-3xl overflow-hidden shadow-2xs hover:shadow-lg transition-all duration-200 flex flex-col justify-between"
                                         >
-                                            <div className="p-5 flex items-start gap-3.5">
-                                                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-base shrink-0 border border-indigo-100">
-                                                    <Package size={22} />
+                                            {/* Visual Thumbnail / Preview */}
+                                            <div className="w-full h-36 bg-gray-50 border-b border-gray-100 flex items-center justify-center overflow-hidden relative group/thumb">
+                                                {comp.thumbnail ? (
+                                                    <img 
+                                                        src={comp.thumbnail} 
+                                                        alt={comp.name} 
+                                                        className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-200" 
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-indigo-300 bg-gradient-to-b from-indigo-50/40 to-indigo-50/10">
+                                                        <Package size={36} className="text-indigo-400/80" />
+                                                        <span className="text-[10px] font-mono text-indigo-400">User Object</span>
+                                                    </div>
+                                                )}
+                                                <div className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-[9px] font-mono px-2 py-0.5 rounded-full">
+                                                    {comp.objects.length} obj
                                                 </div>
+                                            </div>
+
+                                            <div className="p-4 flex items-start gap-3">
                                                 <div className="flex-1 min-w-0">
                                                     <h3 className="font-bold text-gray-900 text-sm truncate">
                                                         {comp.name}
@@ -665,7 +681,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                                     <button
                                                         onClick={() => onExportComponent(comp)}
                                                         className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
-                                                        title="Exportar archivo .json"
+                                                        title={isEn ? "Export .json file" : "Exportar archivo .json"}
                                                     >
                                                         <Download size={15} />
                                                     </button>

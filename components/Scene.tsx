@@ -790,7 +790,12 @@ const STLModel = forwardRef<THREE.Mesh, { url: string; data: SceneObject; isSele
                     opacity={data.material?.opacity ?? 0.75} 
                     side={THREE.DoubleSide} 
                 />
-                {isSelected && <Outlines thickness={0.05} color="#FACC15" screenspace={false} />}
+                {isSelected && (
+                    <lineSegments renderOrder={10}>
+                        <wireframeGeometry args={[geometry]} />
+                        <lineBasicMaterial color="#FACC15" linewidth={1} depthTest={true} />
+                    </lineSegments>
+                )}
             </mesh>
         );
     } catch (e) {
@@ -834,9 +839,9 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
             const size = new THREE.Vector3();
             bbox.getSize(size);
             const maxDim = Math.max(size.x, size.y, size.z);
-            if (maxDim > 10 || maxDim < 0.5) {
-                const scaleFactor = 6.0 / (maxDim || 1);
-                clone.scale.multiplyScalar(scaleFactor);
+            if (maxDim > 0.0001) {
+                const scaleFactor = 4.0 / maxDim;
+                clone.scale.set(scaleFactor, scaleFactor, scaleFactor);
             }
 
             return clone;
@@ -845,7 +850,7 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
         return (
             <group ref={ref}>
                 <primitive object={normalizedObj} />
-                {isSelected && <ModelOutlines object={normalizedObj} color="#FACC15" thickness={0.05} />}
+                {isSelected && <ModelWireframe object={normalizedObj} color="#FACC15" />}
             </group>
         );
     } catch (e) {
@@ -855,22 +860,25 @@ const OBJModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSel
 
 import { createPortal } from '@react-three/fiber';
 
-// Helper to apply Outlines to all meshes in a group
-const ModelOutlines = ({ object, color = "yellow", thickness = 0.05 }: { object: THREE.Object3D, color?: string, thickness?: number }) => {
+// Helper to apply Wireframe to all meshes in an imported model
+const ModelWireframe = ({ object, color = "#FACC15" }: { object: THREE.Object3D, color?: string }) => {
     const [meshes, setMeshes] = useState<THREE.Mesh[]>([]);
     
     useEffect(() => {
         const list: THREE.Mesh[] = [];
         object.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) list.push(child as THREE.Mesh);
+            if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).geometry) list.push(child as THREE.Mesh);
         });
         setMeshes(list);
     }, [object]);
 
     return (
         <>
-            {meshes.map(mesh => createPortal(
-                <Outlines thickness={thickness} color={color} screenspace={false} opacity={1} transparent={false} angle={0} />,
+            {meshes.map((mesh, idx) => createPortal(
+                <lineSegments key={idx} renderOrder={10}>
+                    <wireframeGeometry args={[mesh.geometry]} />
+                    <lineBasicMaterial color={color} linewidth={1} depthTest={true} />
+                </lineSegments>,
                 mesh
             ))}
         </>
@@ -912,7 +920,7 @@ const GLTFModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isSe
         return (
             <group ref={ref}>
                 <primitive object={scene} />
-                {isSelected && <ModelOutlines object={scene} />}
+                {isSelected && <ModelWireframe object={scene} />}
             </group>
         );
     } catch (e) {
@@ -958,7 +966,7 @@ const RhinoModel = forwardRef<THREE.Group, { url: string; data: SceneObject; isS
         return (
             <group ref={ref}>
                 <primitive object={scene} />
-                {isSelected && <ModelOutlines object={scene} />}
+                {isSelected && <ModelWireframe object={scene} />}
             </group>
         );
     } catch(e) {
@@ -982,7 +990,9 @@ const GroupComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSele
             onClick={(e) => {
                 if (!isLocked) {
                     e.stopPropagation();
-                    onSelect(data.id);
+                    const pType = (e as any)?.nativeEvent?.pointerType || (e as any)?.pointerType;
+                    if (pType === 'touch') return;
+                    onSelect(e);
                 }
             }}
         >
@@ -1127,13 +1137,10 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
                      />
                  );
              })()}
-            {isSelected && type !== 'plane' && (
-                <Outlines thickness={0.05} color="#FACC15" screenspace={false} opacity={1} transparent={false} angle={0} />
-            )}
-            {isSelected && type === 'plane' && (
-                <lineSegments>
-                    <edgesGeometry args={[geometry]} />
-                    <lineBasicMaterial color="#FACC15" linewidth={2} />
+            {isSelected && (
+                <lineSegments renderOrder={10}>
+                    <wireframeGeometry args={[geometry]} />
+                    <lineBasicMaterial color="#FACC15" linewidth={1.5} depthTest={true} />
                 </lineSegments>
             )}
         </mesh>
@@ -1420,36 +1427,71 @@ const SceneContent = ({
         }
     }, [selectedIds, objects]);
 
-    // Multi-selection Centroid & Transform Proxy
+    // Helper to calculate world center of any object (including strokes and groups)
+    const getObjectWorldCenter = (obj: SceneObject, allObjs: SceneObject[]): THREE.Vector3 => {
+        if (obj.type === 'stroke' && obj.strokeData?.points && obj.strokeData.points.length > 0) {
+            let sumX = 0, sumY = 0, sumZ = 0;
+            obj.strokeData.points.forEach(p => {
+                sumX += p.x;
+                sumY += p.y;
+                sumZ += p.z;
+            });
+            const n = obj.strokeData.points.length;
+            return new THREE.Vector3(
+                obj.position.x + sumX / n,
+                obj.position.y + sumY / n,
+                obj.position.z + sumZ / n
+            );
+        }
+        if (obj.type === 'group') {
+            const children = allObjs.filter(o => o.parentId === obj.id);
+            if (children.length > 0) {
+                let sumX = 0, sumY = 0, sumZ = 0;
+                children.forEach(c => {
+                    const cCenter = getObjectWorldCenter(c, allObjs);
+                    sumX += cCenter.x;
+                    sumY += cCenter.y;
+                    sumZ += cCenter.z;
+                });
+                return new THREE.Vector3(
+                    sumX / children.length,
+                    sumY / children.length,
+                    sumZ / children.length
+                );
+            }
+        }
+        return new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
+    };
+
+    // Multi-selection Centroid & Transform Proxy (True arithmetic average of all selected objects)
     const multiCentroid = useMemo(() => {
         if (selectedIds.length <= 1) return null;
-        let minX = Infinity, minY = Infinity, minZ = Infinity;
-        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        let sumX = 0, sumY = 0, sumZ = 0;
         let count = 0;
         selectedIds.forEach(id => {
             const obj = objects.find(o => o.id === id);
-            if (obj && obj.position) {
-                minX = Math.min(minX, obj.position.x);
-                minY = Math.min(minY, obj.position.y);
-                minZ = Math.min(minZ, obj.position.z);
-                maxX = Math.max(maxX, obj.position.x);
-                maxY = Math.max(maxY, obj.position.y);
-                maxZ = Math.max(maxZ, obj.position.z);
+            if (obj) {
+                const c = getObjectWorldCenter(obj, objects);
+                sumX += c.x;
+                sumY += c.y;
+                sumZ += c.z;
                 count++;
             }
         });
         if (count === 0) return null;
-        return new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
     }, [selectedIds, objects]);
 
     const multiProxyMeshRef = useRef<THREE.Mesh>(null);
     const multiTransformControlsRef = useRef<any>(null);
     const initialCentroidRef = useRef<THREE.Vector3 | null>(null);
-    const initialMultiPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+    const initialMultiStatesRef = useRef<Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>>(new Map());
 
     useEffect(() => {
         if (multiProxyMeshRef.current && multiCentroid && !isTransformingRef.current) {
             multiProxyMeshRef.current.position.copy(multiCentroid);
+            multiProxyMeshRef.current.rotation.set(0, 0, 0);
+            multiProxyMeshRef.current.scale.set(1, 1, 1);
         }
     }, [multiCentroid]);
 
@@ -1457,16 +1499,49 @@ const SceneContent = ({
         const mtc = multiTransformControlsRef.current;
         if (!mtc) return;
         const handleDragging = (event: any) => {
-            isTransformingRef.current = !!event.value;
+            const isDragging = !!event.value;
+            isTransformingRef.current = isDragging;
             if (controlsRef.current) {
-                controlsRef.current.enabled = !event.value;
+                controlsRef.current.enabled = !isDragging;
+            }
+            if (isDragging) {
+                if (multiProxyMeshRef.current && multiCentroid) {
+                    initialCentroidRef.current = multiCentroid.clone();
+                    multiProxyMeshRef.current.position.copy(multiCentroid);
+                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
+                    multiProxyMeshRef.current.scale.set(1, 1, 1);
+                    multiProxyMeshRef.current.updateMatrixWorld(true);
+
+                    const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
+                    selectedIds.forEach(id => {
+                        const obj = objects.find(o => o.id === id);
+                        if (obj) {
+                            map.set(id, {
+                                position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
+                                rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
+                                scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
+                            });
+                        }
+                    });
+                    initialMultiStatesRef.current = map;
+                }
+                onTransformStart();
+            } else {
+                initialCentroidRef.current = null;
+                initialMultiStatesRef.current.clear();
+                if (multiProxyMeshRef.current && multiCentroid) {
+                    multiProxyMeshRef.current.position.copy(multiCentroid);
+                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
+                    multiProxyMeshRef.current.scale.set(1, 1, 1);
+                }
+                onTransformEnd();
             }
         };
         mtc.addEventListener('dragging-changed', handleDragging);
         return () => {
             mtc.removeEventListener('dragging-changed', handleDragging);
         };
-    }, [selectedIds]);
+    }, [selectedIds, objects, multiCentroid, onTransformStart, onTransformEnd]);
 
     // Gesture Callbacks: Snap to Closest Canonical View in 100% Orthographic Projection (Sin Perspectiva)
     const handleSnapView = useCallback(() => {
@@ -2099,27 +2174,47 @@ const SceneContent = ({
         if (!isDrawing.current) return;
 
         if (activeTool === 'brush') {
-             const hits = raycaster.intersectObjects(scene.children, true);
-             const geometryHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
-             
-             if (geometryHits.length === 0) return;
+            const rawEvents = (e.nativeEvent && typeof e.nativeEvent.getCoalescedEvents === 'function')
+                ? e.nativeEvent.getCoalescedEvents()
+                : [e];
 
-             let point = geometryHits[0].point.clone();
-             point.addScaledVector(raycaster.ray.direction, -0.01);
-             
-             if (currentBrushSmoothing > 0 && currentPoints.current.length > 0) {
-                 const last = currentPoints.current[currentPoints.current.length - 1];
-                 point.lerp(last, currentBrushSmoothing);
-             }
-             
-             const lastP = currentPoints.current[currentPoints.current.length - 1];
-             if (lastP.distanceTo(point) > 0.05) {
-                 currentPoints.current.push(point);
-                 setPreviewPath([...currentPoints.current]); 
-             }
+            const dom = gl.domElement;
+            const rect = dom.getBoundingClientRect();
+            let added = false;
+
+            for (const subEvent of rawEvents) {
+                const subX = ((subEvent.clientX - rect.left) / rect.width) * 2 - 1;
+                const subY = -((subEvent.clientY - rect.top) / rect.height) * 2 + 1;
+                const subRay = new THREE.Raycaster();
+                subRay.setFromCamera(new THREE.Vector2(subX, subY), camera);
+
+                const hits = subRay.intersectObjects(scene.children, true);
+                const geometryHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
+                
+                if (geometryHits.length > 0) {
+                    let point = geometryHits[0].point.clone();
+                    point.addScaledVector(subRay.ray.direction, -0.01);
+                    
+                    if (currentBrushSmoothing > 0 && currentPoints.current.length > 0) {
+                        const last = currentPoints.current[currentPoints.current.length - 1];
+                        point.lerp(last, currentBrushSmoothing);
+                    }
+                    
+                    const lastP = currentPoints.current[currentPoints.current.length - 1];
+                    // Continuous fine-grain sampling at 0.035 units prevents coarse polylines even when drawing fast
+                    if (!lastP || lastP.distanceTo(point) > 0.035) {
+                        currentPoints.current.push(point);
+                        added = true;
+                    }
+                }
+            }
+
+            if (added) {
+                setPreviewPath([...currentPoints.current]); 
+            }
         }
 
-    }, [activeTool, raycaster, scene, eraserMode, onPartialErase, currentBrushSmoothing, eraserSize, currentBrushSize, eraserCursorPos, camera]);
+    }, [activeTool, raycaster, scene, eraserMode, onPartialErase, currentBrushSmoothing, eraserSize, currentBrushSize, eraserCursorPos, camera, gl]);
 
     const handlePointerUp = useCallback(() => {
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
@@ -2138,12 +2233,11 @@ const SceneContent = ({
         }
     }, [activeTool, onStrokeComplete, camera]);
 
-    // Background Deselect
+    // Background Deselect (Touch is reserved for camera navigation)
     const handleMiss = (e: any) => {
-        // Ensure we are in Select Mode and NOT drawing or interacting with gizmo
+        const pType = e?.nativeEvent?.pointerType || e?.pointerType;
+        if (pType === 'touch') return;
         if (activeTool === 'select' && !isDrawing.current && !isLassoing.current) {
-            // Check if the click was truly on empty space (not captured by other elements)
-             // Passing null triggers the strict deselection in parent
             onSelect(null);
         }
     };
@@ -2246,6 +2340,12 @@ const SceneContent = ({
                             isLocked: isLock,
                             onSelect: (idOrEvent: any) => {
                                 if (!isLock) {
+                                    // User request: Fingers do NOT select objects, only stylus/pen or mouse
+                                    const pType = idOrEvent?.nativeEvent?.pointerType || idOrEvent?.pointerType;
+                                    if (pType === 'touch') {
+                                        return;
+                                    }
+
                                     if (activeTool === 'pipette') {
                                         if (idOrEvent && typeof idOrEvent !== 'string' && idOrEvent.stopPropagation) {
                                             idOrEvent.stopPropagation();
@@ -2379,64 +2479,79 @@ const SceneContent = ({
                     <TransformControls 
                         ref={multiTransformControlsRef}
                         mode={mode} 
-                        onMouseDown={() => {
-                            isTransformingRef.current = true;
-                            if (controlsRef.current) controlsRef.current.enabled = false;
-                            if (multiProxyMeshRef.current) {
-                                initialCentroidRef.current = multiProxyMeshRef.current.position.clone();
-                                const map = new Map<string, { x: number; y: number; z: number }>();
-                                selectedIds.forEach(id => {
-                                    const obj = objects.find(o => o.id === id);
-                                    if (obj && obj.position) map.set(id, { ...obj.position });
-                                });
-                                initialMultiPositionsRef.current = map;
-                            }
-                            onTransformStart();
-                        }}
-                        onMouseUp={() => {
-                            isTransformingRef.current = false;
-                            initialCentroidRef.current = null;
-                            initialMultiPositionsRef.current.clear();
-                            onTransformEnd();
-                        }}
                         onChange={() => {
-                            if (!isTransformingRef.current) return;
-                            if (multiProxyMeshRef.current && onTransformMultiple) {
-                                if (!initialCentroidRef.current) {
-                                    initialCentroidRef.current = multiProxyMeshRef.current.position.clone();
-                                    const map = new Map<string, { x: number; y: number; z: number }>();
-                                    selectedIds.forEach(id => {
-                                        const obj = objects.find(o => o.id === id);
-                                        if (obj && obj.position) map.set(id, { ...obj.position });
-                                    });
-                                    initialMultiPositionsRef.current = map;
-                                }
-                                const cur = multiProxyMeshRef.current.position;
-                                const dx = cur.x - initialCentroidRef.current.x;
-                                const dy = cur.y - initialCentroidRef.current.y;
-                                const dz = cur.z - initialCentroidRef.current.z;
-                                const updates = selectedIds.map(id => {
-                                    const obj = objects.find(o => o.id === id);
-                                    const init = initialMultiPositionsRef.current.get(id) || (obj?.position ? { ...obj.position } : { x: 0, y: 0, z: 0 });
+                            if (!isTransformingRef.current || !multiProxyMeshRef.current || !onTransformMultiple) return;
+                            const initialCentroid = initialCentroidRef.current;
+                            if (!initialCentroid) return;
+
+                            const proxy = multiProxyMeshRef.current;
+                            proxy.updateMatrixWorld(true);
+
+                            const deltaPos = proxy.position.clone().sub(initialCentroid);
+                            const deltaQuat = proxy.quaternion.clone();
+                            const proxyScale = proxy.scale;
+
+                            const updates = selectedIds.map(id => {
+                                const obj = objects.find(o => o.id === id);
+                                const init = initialMultiStatesRef.current.get(id);
+                                if (!obj || !init) return { id, updates: {} };
+
+                                if (mode === 'translate') {
                                     return {
                                         id,
                                         updates: {
                                             position: {
-                                                x: init.x + dx,
-                                                y: init.y + dy,
-                                                z: init.z + dz
+                                                x: init.position.x + deltaPos.x,
+                                                y: init.position.y + deltaPos.y,
+                                                z: init.position.z + deltaPos.z
                                             }
                                         }
                                     };
-                                });
-                                onTransformMultiple(updates);
-                            }
+                                } else if (mode === 'rotate') {
+                                    const offset = init.position.clone().sub(initialCentroid);
+                                    offset.applyQuaternion(deltaQuat);
+                                    const newPos = initialCentroid.clone().add(offset);
+
+                                    const initQuat = new THREE.Quaternion().setFromEuler(init.rotation);
+                                    const newQuat = deltaQuat.clone().multiply(initQuat);
+                                    const newEuler = new THREE.Euler().setFromQuaternion(newQuat);
+
+                                    return {
+                                        id,
+                                        updates: {
+                                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                                            rotation: { x: newEuler.x, y: newEuler.y, z: newEuler.z }
+                                        }
+                                    };
+                                } else if (mode === 'scale') {
+                                    const offset = init.position.clone().sub(initialCentroid);
+                                    offset.x *= proxyScale.x;
+                                    offset.y *= proxyScale.y;
+                                    offset.z *= proxyScale.z;
+                                    const newPos = initialCentroid.clone().add(offset);
+
+                                    return {
+                                        id,
+                                        updates: {
+                                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                                            scale: {
+                                                x: init.scale.x * proxyScale.x,
+                                                y: init.scale.y * proxyScale.y,
+                                                z: init.scale.z * proxyScale.z
+                                            }
+                                        }
+                                    };
+                                }
+
+                                return { id, updates: {} };
+                            });
+                            onTransformMultiple(updates);
                         }}
                         size={0.8}
                     >
-                        <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]} visible={false}>
-                            <boxGeometry args={[0.01, 0.01, 0.01]} />
-                            <meshBasicMaterial transparent opacity={0} />
+                        <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]}>
+                            <boxGeometry args={[0.001, 0.001, 0.001]} />
+                            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
                         </mesh>
                     </TransformControls>
                 </group>

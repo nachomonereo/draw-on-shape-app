@@ -89,6 +89,27 @@ const smoothPoints = (points: Vector3[], iterations: number = 2): Vector3[] => {
     return current;
 };
 
+// Speed-independent curve resampling using Centripetal Catmull-Rom spline
+const resampleStrokeCurve = (points: Vector3[], targetSpacing: number = 0.035): Vector3[] => {
+    if (points.length < 3) return points;
+    const v3Points = points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+
+    let totalLen = 0;
+    for (let i = 1; i < v3Points.length; i++) {
+        totalLen += v3Points[i - 1].distanceTo(v3Points[i]);
+    }
+    if (totalLen < 0.005) return points;
+
+    try {
+        const curve = new THREE.CatmullRomCurve3(v3Points, false, 'centripetal', 0.5);
+        const divisions = Math.min(800, Math.max(v3Points.length * 2, Math.ceil(totalLen / targetSpacing)));
+        const sampled = curve.getSpacedPoints(divisions);
+        return sampled.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    } catch (e) {
+        return points;
+    }
+};
+
 // -- Simplified Toolbar Item without local Tooltip --
 
 const ToolbarItem = ({ 
@@ -361,10 +382,20 @@ export default function App() {
             componentObjs = [rootGroup, ...remappedChildren];
         }
 
+        let thumbnail = '';
+        if (exportRef.current) {
+            try {
+                thumbnail = exportRef.current.getScreenshot('image/png') || '';
+            } catch (e) {
+                console.warn("User Object thumbnail capture failed", e);
+            }
+        }
+
         const newComp: SceneComponent = {
             id: generateId(),
             name: inputName.trim(),
             createdAt: Date.now(),
+            thumbnail,
             objects: componentObjs
         };
 
@@ -909,6 +940,8 @@ export default function App() {
             processedPoints = smoothPoints(points, iterations);
         }
         
+        // Speed-independent centripetal resampling: guarantees consistent segment resolution
+        processedPoints = resampleStrokeCurve(processedPoints, 0.035);
         const simplified = simplifyPoints(processedPoints);
         
         // Compute geometric center so Gumball/Gizmo is centered right on the drawn stroke/shape
