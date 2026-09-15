@@ -544,9 +544,9 @@ const ExtrusionComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isS
                  );
              })()}
              {isSelected && (
-                 <lineSegments>
+                 <lineSegments renderOrder={10}>
                      <edgesGeometry args={[geometry]} />
-                     <lineBasicMaterial color="#FACC15" linewidth={2} />
+                     <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
                  </lineSegments>
              )}
         </mesh>
@@ -644,9 +644,9 @@ const LoftComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; allObjec
              castShadow receiveShadow>
              <meshStandardMaterial color={data.material.color} roughness={0.5} metalness={0.1} transparent={!isSolid} opacity={data.material.opacity ?? 1} depthWrite={isSolid} side={THREE.DoubleSide} />
              {isSelected && (
-                 <lineSegments>
+                 <lineSegments renderOrder={10}>
                      <edgesGeometry args={[geometry]} />
-                     <lineBasicMaterial color="#FACC15" linewidth={2} />
+                     <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
                  </lineSegments>
              )}
         </mesh>
@@ -793,7 +793,7 @@ const STLModel = forwardRef<THREE.Mesh, { url: string; data: SceneObject; isSele
                 {isSelected && (
                     <lineSegments renderOrder={10}>
                         <wireframeGeometry args={[geometry]} />
-                        <lineBasicMaterial color="#FACC15" linewidth={1} depthTest={true} />
+                        <lineBasicMaterial color="#FACC15" depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
                     </lineSegments>
                 )}
             </mesh>
@@ -877,7 +877,7 @@ const ModelWireframe = ({ object, color = "#FACC15" }: { object: THREE.Object3D,
             {meshes.map((mesh, idx) => createPortal(
                 <lineSegments key={idx} renderOrder={10}>
                     <wireframeGeometry args={[mesh.geometry]} />
-                    <lineBasicMaterial color={color} linewidth={1} depthTest={true} />
+                    <lineBasicMaterial color={color} depthTest={true} polygonOffset={true} polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
                 </lineSegments>,
                 mesh
             ))}
@@ -1078,17 +1078,24 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
     const geometry = useMemo(() => {
         switch (type) {
             case 'box': return new THREE.BoxGeometry(params?.width || 1, params?.height || 1, params?.depth || 1);
-            case 'sphere': return new THREE.SphereGeometry(params?.radius || 0.5, 32, 32);
-            case 'cylinder': return new THREE.CylinderGeometry(params?.radius || 0.5, params?.radius || 0.5, params?.height || 1, 32);
-            case 'cone': return new THREE.ConeGeometry(params?.radius || 0.5, params?.height || 1, 32);
-            case 'capsule': return new THREE.CapsuleGeometry(params?.radius || 0.5, params?.height || 1, 4, 16);
-            case 'torus': return new THREE.TorusGeometry(params?.radius || 0.5, params?.tube || 0.2, 16, 50);
+            case 'sphere': return new THREE.SphereGeometry(params?.radius || 0.5, 18, 18);
+            case 'cylinder': return new THREE.CylinderGeometry(params?.radius || 0.5, params?.radius || 0.5, params?.height || 1, 18);
+            case 'cone': return new THREE.ConeGeometry(params?.radius || 0.5, params?.height || 1, 18);
+            case 'capsule': return new THREE.CapsuleGeometry(params?.radius || 0.5, params?.height || 1, 4, 14);
+            case 'torus': return new THREE.TorusGeometry(params?.radius || 0.5, params?.tube || 0.2, 14, 28);
             case 'tetrahedron': return new THREE.TetrahedronGeometry(params?.radius || 1);
             case 'octahedron': return new THREE.OctahedronGeometry(params?.radius || 1);
             case 'plane': return new THREE.PlaneGeometry(params?.width || 2, params?.height || 2);
             default: return new THREE.BoxGeometry();
         }
     }, [type, params]);
+
+    const wireframeGeometry = useMemo(() => {
+        if (type === 'box' || type === 'plane') {
+            return new THREE.EdgesGeometry(geometry);
+        }
+        return new THREE.WireframeGeometry(geometry);
+    }, [geometry, type]);
 
     useFrame((state) => {
         if (!localRef.current) return;
@@ -1132,15 +1139,21 @@ const MeshComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelect
                          metalness={material.metalness} 
                          transparent={!isSolid} 
                          opacity={material.opacity ?? 1}
-                         depthWrite={isSolid}
+                         depthWrite={true}
                          side={THREE.DoubleSide}
                      />
                  );
              })()}
-            {isSelected && (
+            {isSelected && wireframeGeometry && (
                 <lineSegments renderOrder={10}>
-                    <wireframeGeometry args={[geometry]} />
-                    <lineBasicMaterial color="#FACC15" linewidth={1.5} depthTest={true} />
+                    <primitive object={wireframeGeometry} attach="geometry" />
+                    <lineBasicMaterial 
+                        color="#FACC15" 
+                        depthTest={true} 
+                        polygonOffset={true} 
+                        polygonOffsetFactor={-2} 
+                        polygonOffsetUnits={-2} 
+                    />
                 </lineSegments>
             )}
         </mesh>
@@ -1483,6 +1496,7 @@ const SceneContent = ({
     }, [selectedIds, objects]);
 
     const multiProxyMeshRef = useRef<THREE.Mesh>(null);
+    const [multiProxyTarget, setMultiProxyTarget] = useState<THREE.Mesh | null>(null);
     const multiTransformControlsRef = useRef<any>(null);
     const initialCentroidRef = useRef<THREE.Vector3 | null>(null);
     const initialMultiStatesRef = useRef<Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>>(new Map());
@@ -2233,13 +2247,9 @@ const SceneContent = ({
         }
     }, [activeTool, onStrokeComplete, camera]);
 
-    // Background Deselect (Touch is reserved for camera navigation)
-    const handleMiss = (e: any) => {
-        const pType = e?.nativeEvent?.pointerType || e?.pointerType;
-        if (pType === 'touch') return;
-        if (activeTool === 'select' && !isDrawing.current && !isLassoing.current) {
-            onSelect(null);
-        }
+    // Background interaction: preserve selection when touching or panning the background
+    const handleMiss = (_e: any) => {
+        // Intentionally keep selection active when interacting with background
     };
 
     const selectedObject = selectedIds.length === 1 ? objects.find(o => o.id === selectedIds[0]) : null;
@@ -2476,84 +2486,149 @@ const SceneContent = ({
             {/* MULTI-OBJECT TRANSFORM CONTROLS (GUMBALL) */}
             {selectedIds.length > 1 && activeTool === 'select' && multiCentroid && (
                 <group key="multi-transform-group">
-                    <TransformControls 
-                        ref={multiTransformControlsRef}
-                        mode={mode} 
-                        onChange={() => {
-                            if (!isTransformingRef.current || !multiProxyMeshRef.current || !onTransformMultiple) return;
-                            const initialCentroid = initialCentroidRef.current;
-                            if (!initialCentroid) return;
-
-                            const proxy = multiProxyMeshRef.current;
-                            proxy.updateMatrixWorld(true);
-
-                            const deltaPos = proxy.position.clone().sub(initialCentroid);
-                            const deltaQuat = proxy.quaternion.clone();
-                            const proxyScale = proxy.scale;
-
-                            const updates = selectedIds.map(id => {
-                                const obj = objects.find(o => o.id === id);
-                                const init = initialMultiStatesRef.current.get(id);
-                                if (!obj || !init) return { id, updates: {} };
-
-                                if (mode === 'translate') {
-                                    return {
-                                        id,
-                                        updates: {
-                                            position: {
-                                                x: init.position.x + deltaPos.x,
-                                                y: init.position.y + deltaPos.y,
-                                                z: init.position.z + deltaPos.z
-                                            }
-                                        }
-                                    };
-                                } else if (mode === 'rotate') {
-                                    const offset = init.position.clone().sub(initialCentroid);
-                                    offset.applyQuaternion(deltaQuat);
-                                    const newPos = initialCentroid.clone().add(offset);
-
-                                    const initQuat = new THREE.Quaternion().setFromEuler(init.rotation);
-                                    const newQuat = deltaQuat.clone().multiply(initQuat);
-                                    const newEuler = new THREE.Euler().setFromQuaternion(newQuat);
-
-                                    return {
-                                        id,
-                                        updates: {
-                                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
-                                            rotation: { x: newEuler.x, y: newEuler.y, z: newEuler.z }
-                                        }
-                                    };
-                                } else if (mode === 'scale') {
-                                    const offset = init.position.clone().sub(initialCentroid);
-                                    offset.x *= proxyScale.x;
-                                    offset.y *= proxyScale.y;
-                                    offset.z *= proxyScale.z;
-                                    const newPos = initialCentroid.clone().add(offset);
-
-                                    return {
-                                        id,
-                                        updates: {
-                                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
-                                            scale: {
-                                                x: init.scale.x * proxyScale.x,
-                                                y: init.scale.y * proxyScale.y,
-                                                z: init.scale.z * proxyScale.z
-                                            }
-                                        }
-                                    };
-                                }
-
-                                return { id, updates: {} };
-                            });
-                            onTransformMultiple(updates);
-                        }}
-                        size={0.8}
+                    <mesh 
+                        ref={(mesh) => {
+                            multiProxyMeshRef.current = mesh;
+                            if (mesh !== multiProxyTarget) setMultiProxyTarget(mesh);
+                        }} 
+                        position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]}
+                        visible={false}
                     >
-                        <mesh ref={multiProxyMeshRef} position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]}>
-                            <boxGeometry args={[0.001, 0.001, 0.001]} />
-                            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-                        </mesh>
-                    </TransformControls>
+                        <boxGeometry args={[0.01, 0.01, 0.01]} />
+                    </mesh>
+                    {multiProxyTarget && (
+                        <TransformControls 
+                            ref={multiTransformControlsRef}
+                            object={multiProxyTarget}
+                            mode={mode} 
+                            size={0.8}
+                            onMouseDown={() => {
+                                isTransformingRef.current = true;
+                                if (controlsRef.current) controlsRef.current.enabled = false;
+                                if (multiProxyMeshRef.current && multiCentroid) {
+                                    initialCentroidRef.current = multiCentroid.clone();
+                                    multiProxyMeshRef.current.position.copy(multiCentroid);
+                                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
+                                    multiProxyMeshRef.current.scale.set(1, 1, 1);
+                                    multiProxyMeshRef.current.updateMatrixWorld(true);
+
+                                    const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
+                                    selectedIds.forEach(id => {
+                                        const obj = objects.find(o => o.id === id);
+                                        if (obj) {
+                                            map.set(id, {
+                                                position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
+                                                rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
+                                                scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
+                                            });
+                                        }
+                                    });
+                                    initialMultiStatesRef.current = map;
+                                }
+                                onTransformStart();
+                            }}
+                            onMouseUp={() => {
+                                isTransformingRef.current = false;
+                                if (controlsRef.current) controlsRef.current.enabled = true;
+                                initialCentroidRef.current = null;
+                                initialMultiStatesRef.current.clear();
+                                if (multiProxyMeshRef.current && multiCentroid) {
+                                    multiProxyMeshRef.current.position.copy(multiCentroid);
+                                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
+                                    multiProxyMeshRef.current.scale.set(1, 1, 1);
+                                }
+                                onTransformEnd();
+                            }}
+                            onChange={() => {
+                                if (!multiProxyMeshRef.current || !onTransformMultiple) return;
+                                if (!isTransformingRef.current) {
+                                    isTransformingRef.current = true;
+                                    if (controlsRef.current) controlsRef.current.enabled = false;
+                                    if (multiCentroid && !initialCentroidRef.current) {
+                                        initialCentroidRef.current = multiCentroid.clone();
+                                        const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
+                                        selectedIds.forEach(id => {
+                                            const obj = objects.find(o => o.id === id);
+                                            if (obj) {
+                                                map.set(id, {
+                                                    position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
+                                                    rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
+                                                    scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
+                                                });
+                                            }
+                                        });
+                                        initialMultiStatesRef.current = map;
+                                    }
+                                    onTransformStart();
+                                }
+                                const initialCentroid = initialCentroidRef.current;
+                                if (!initialCentroid) return;
+
+                                const proxy = multiProxyMeshRef.current;
+                                proxy.updateMatrixWorld(true);
+
+                                const deltaPos = proxy.position.clone().sub(initialCentroid);
+                                const deltaQuat = proxy.quaternion.clone();
+                                const proxyScale = proxy.scale;
+
+                                const updates = selectedIds.map(id => {
+                                    const obj = objects.find(o => o.id === id);
+                                    const init = initialMultiStatesRef.current.get(id);
+                                    if (!obj || !init) return { id, updates: {} };
+
+                                    if (mode === 'translate') {
+                                        return {
+                                            id,
+                                            updates: {
+                                                position: {
+                                                    x: init.position.x + deltaPos.x,
+                                                    y: init.position.y + deltaPos.y,
+                                                    z: init.position.z + deltaPos.z
+                                                }
+                                            }
+                                        };
+                                    } else if (mode === 'rotate') {
+                                        const offset = init.position.clone().sub(initialCentroid);
+                                        offset.applyQuaternion(deltaQuat);
+                                        const newPos = initialCentroid.clone().add(offset);
+
+                                        const initQuat = new THREE.Quaternion().setFromEuler(init.rotation);
+                                        const newQuat = deltaQuat.clone().multiply(initQuat);
+                                        const newEuler = new THREE.Euler().setFromQuaternion(newQuat);
+
+                                        return {
+                                            id,
+                                            updates: {
+                                                position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                                                rotation: { x: newEuler.x, y: newEuler.y, z: newEuler.z }
+                                            }
+                                        };
+                                    } else if (mode === 'scale') {
+                                        const offset = init.position.clone().sub(initialCentroid);
+                                        offset.x *= proxyScale.x;
+                                        offset.y *= proxyScale.y;
+                                        offset.z *= proxyScale.z;
+                                        const newPos = initialCentroid.clone().add(offset);
+
+                                        return {
+                                            id,
+                                            updates: {
+                                                position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                                                scale: {
+                                                    x: init.scale.x * proxyScale.x,
+                                                    y: init.scale.y * proxyScale.y,
+                                                    z: init.scale.z * proxyScale.z
+                                                }
+                                            }
+                                        };
+                                    }
+
+                                    return { id, updates: {} };
+                                });
+                                onTransformMultiple(updates);
+                            }}
+                        />
+                    )}
                 </group>
             )}
 

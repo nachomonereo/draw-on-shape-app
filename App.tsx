@@ -1980,13 +1980,14 @@ export default function App() {
 
             {showUI && (
                 isLayersPanelCollapsed ? (
-                    <div className="absolute left-4 top-28 z-10 animate-in fade-in duration-200 pointer-events-none">
+                    <div className="absolute left-6 bottom-8 z-20 animate-in fade-in duration-200 pointer-events-none">
                         <button
                             onClick={() => setIsLayersPanelCollapsed(false)}
-                            className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 text-gray-700 p-2.5 rounded-2xl shadow-xl hover:bg-gray-50 flex items-center gap-1.5 group transition-all"
+                            className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 text-gray-700 h-12 px-3.5 rounded-2xl shadow-xl hover:bg-gray-50 flex items-center gap-2 group transition-all"
                             title={language === 'en' ? "Show Layers" : "Mostrar Capas"}
                         >
                             <LayersIcon size={20} className="text-gray-700 group-hover:text-blue-600 transition-colors" />
+                            <span className="text-xs font-semibold text-gray-600 group-hover:text-blue-600">{language === 'en' ? 'Layers' : 'Capas'}</span>
                             <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
                         </button>
                     </div>
@@ -2096,14 +2097,24 @@ export default function App() {
 
                                  {/* Smooth Selected Strokes Button */}
                                  {selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'stroke') && (
-                                     <button
-                                         onClick={handleSmoothSelected}
-                                         className="px-3 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                                         title={language === 'en' ? "Smooth selected stroke geometry" : "Suavizar la geometría de los trazos seleccionados"}
-                                     >
-                                         <Icons.Sparkles size={14} />
-                                         <span>{language === 'en' ? 'Smooth' : 'Suavizar'}</span>
-                                     </button>
+                                     <>
+                                         <button
+                                             onClick={handleSmoothSelected}
+                                             className="px-3 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                                             title={language === 'en' ? "Smooth selected stroke geometry" : "Suavizar la geometría de los trazos seleccionados"}
+                                         >
+                                             <Icons.Sparkles size={14} />
+                                             <span>{language === 'en' ? 'Smooth' : 'Suavizar'}</span>
+                                         </button>
+                                         <button
+                                             onClick={handleActivatePipette}
+                                             className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-colors ${activeTool === 'pipette' ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-400' : 'hover:bg-gray-100 text-gray-700'}`}
+                                             title={language === 'en' ? "Match Style: Copy color and thickness from another stroke" : "Igualar estilo: Copiar color y grosor de otro trazo"}
+                                         >
+                                             <Icons.Pipette size={14} />
+                                             <span>{language === 'en' ? 'Match Style' : 'Igualar'}</span>
+                                         </button>
+                                     </>
                                  )}
 
                                  {selectedIds.length > 1 && (
@@ -2181,16 +2192,6 @@ export default function App() {
                                  </ToolbarItem>
                                 
                                 <div className="h-6 w-[1px] bg-gray-200" />
-                                <ToolbarItem 
-                                     active={activeTool === 'pipette'} 
-                                     onClick={handleActivatePipette} 
-                                     icon={Icons.Pipette} 
-                                     tooltipText="Pipeta (Copiar Color y Grosor)" 
-                                     onHover={setHoverInfo} 
-                                     onLeave={() => setHoverInfo(null)}
-                                 />
-                                 
-                                 <div className="h-6 w-[1px] bg-gray-200" />
                                 
                                 {/* GUIDE TOOLS REMOVED */}
                                 
