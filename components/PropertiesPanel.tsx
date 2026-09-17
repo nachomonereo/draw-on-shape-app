@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { SceneObject, Vector3 } from '../types';
-import { Copy, Trash2, Sparkles, FolderPlus, Ungroup } from 'lucide-react';
+import { Copy, Trash2, Sparkles, FolderPlus, Ungroup, Pipette } from 'lucide-react';
 import { ColorPickerModal } from './ColorPickerModal';
 import { Language } from '../utils/translations';
 
@@ -14,7 +14,7 @@ interface PropertiesPanelProps {
     onSelectedOpacityChange?: (opacity: number, saveToHistory?: boolean) => void;
     onSelectedColorChange?: (color: string) => void;
     onSmoothSelected?: () => void;
-    onDelete: (id: string) => void;
+    onDelete: (idOrIds: string | string[]) => void;
     onDuplicate?: (id: string) => void;
     onGroup?: () => void;
     onUngroup?: () => void;
@@ -91,7 +91,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                             </button>
                         )}
                         <button 
-                            onClick={() => selectedIds.forEach(id => onDelete(id))} 
+                            onClick={() => onDelete(selectedIds)} 
                             className="text-gray-500 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors" 
                             title="Delete selected elements"
                         >
@@ -119,19 +119,28 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                             />
                         </div>
 
-                        {onSmoothSelected && (
-                            <button 
-                                onClick={onSmoothSelected}
-                                className="w-full py-2 px-3 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                                title="Smooth all selected stroke curves"
-                            >
-                                <Sparkles size={14} />
-                                <span>Smooth Selected Strokes</span>
-                                <span className="text-[10px] font-mono text-yellow-600 bg-yellow-100 px-1.5 py-0.5 rounded-full">
-                                    {strokeElements.length}
-                                </span>
-                            </button>
-                        )}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                            {onSmoothSelected && (
+                                <button 
+                                    onClick={onSmoothSelected}
+                                    className="py-2 px-2 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                                    title="Smooth all selected stroke curves"
+                                >
+                                    <Sparkles size={13} />
+                                    <span>Smooth ({strokeElements.length})</span>
+                                </button>
+                            )}
+                            {onActivatePipette && (
+                                <button 
+                                    onClick={onActivatePipette}
+                                    className="py-2 px-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-2xs"
+                                    title="Match Style: Copy color and thickness from another stroke"
+                                >
+                                    <Pipette size={13} />
+                                    <span>Match Style</span>
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -239,23 +248,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         const points = object.strokeData.points;
         if (points.length < 3) return;
 
-        const newPoints: Vector3[] = [];
-        newPoints.push(points[0]);
-        for (let i = 0; i < points.length - 1; i++) {
-            const p0 = points[i];
-            const p1 = points[i+1];
-            newPoints.push({
-                x: 0.75 * p0.x + 0.25 * p1.x,
-                y: 0.75 * p0.y + 0.25 * p1.y,
-                z: 0.75 * p0.z + 0.25 * p1.z
-            });
-            newPoints.push({
-                x: 0.25 * p0.x + 0.75 * p1.x,
-                y: 0.25 * p0.y + 0.75 * p1.y,
-                z: 0.25 * p0.z + 0.75 * p1.z
-            });
-        }
-        newPoints.push(points[points.length-1]);
+        const newPoints = points.map((p, idx) => {
+            if (idx === 0 || idx === points.length - 1) return p;
+            const prev = points[idx - 1];
+            const next = points[idx + 1];
+            return {
+                x: 0.25 * prev.x + 0.5 * p.x + 0.25 * next.x,
+                y: 0.25 * prev.y + 0.5 * p.y + 0.25 * next.y,
+                z: 0.25 * prev.z + 0.5 * p.z + 0.25 * next.z,
+            };
+        });
         
         onChange(object.id, {
             strokeData: { ...object.strokeData, points: newPoints }
@@ -267,23 +269,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         const points = object.extrusionData.pathPoints;
         if (points.length < 3) return;
 
-        const newPoints: Vector3[] = [];
-        newPoints.push(points[0]);
-        for (let i = 0; i < points.length - 1; i++) {
-            const p0 = points[i];
-            const p1 = points[i+1];
-            newPoints.push({
-                x: 0.75 * p0.x + 0.25 * p1.x,
-                y: 0.75 * p0.y + 0.25 * p1.y,
-                z: 0.75 * p0.z + 0.25 * p1.z
-            });
-            newPoints.push({
-                x: 0.25 * p0.x + 0.75 * p1.x,
-                y: 0.25 * p0.y + 0.75 * p1.y,
-                z: 0.25 * p0.z + 0.75 * p1.z
-            });
-        }
-        newPoints.push(points[points.length-1]);
+        const newPoints = points.map((p, idx) => {
+            if (idx === 0 || idx === points.length - 1) return p;
+            const prev = points[idx - 1];
+            const next = points[idx + 1];
+            return {
+                x: 0.25 * prev.x + 0.5 * p.x + 0.25 * next.x,
+                y: 0.25 * prev.y + 0.5 * p.y + 0.25 * next.y,
+                z: 0.25 * prev.z + 0.5 * p.z + 0.25 * next.z,
+            };
+        });
         
         onChange(object.id, {
             extrusionData: { ...object.extrusionData, pathPoints: newPoints }
@@ -380,17 +375,26 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                                 className="w-full accent-yellow-500 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                             />
                         </div>
-                        <button 
-                            onClick={smoothStroke}
-                            className="w-full py-2 px-3 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                            title="Smooth stroke curve"
-                        >
-                            <Sparkles size={14} />
-                            <span>Smooth Stroke</span>
-                            <span className="text-[10px] font-mono text-yellow-600 bg-yellow-100 px-1.5 py-0.5 rounded-full">
-                                {object.strokeData?.points.length || 0} pts
-                            </span>
-                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button 
+                                onClick={smoothStroke}
+                                className="py-2 px-2 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-colors shadow-2xs"
+                                title="Smooth stroke curve"
+                            >
+                                <Sparkles size={13} />
+                                <span>Smooth</span>
+                            </button>
+                            {onActivatePipette && (
+                                <button 
+                                    onClick={onActivatePipette}
+                                    className="py-2 px-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-colors border border-gray-200 shadow-2xs"
+                                    title="Match Style: Copy color and thickness from another stroke"
+                                >
+                                    <Pipette size={13} />
+                                    <span>Match Style</span>
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
 

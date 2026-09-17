@@ -289,7 +289,14 @@ export default function App() {
             localStorage.setItem('draw_on_shape_components_v1', JSON.stringify(list));
             setCustomComponents(list);
         } catch (e) {
-            console.error("Failed to save components to localStorage", e);
+            console.warn("Failed to save components to localStorage, pruning thumbnails...", e);
+            try {
+                const pruned = list.map((c, idx) => idx === 0 ? c : { ...c, thumbnail: '' });
+                localStorage.setItem('draw_on_shape_components_v1', JSON.stringify(pruned));
+                setCustomComponents(pruned);
+            } catch (e2) {
+                console.error("Critical: Could not save components", e2);
+            }
         }
     };
 
@@ -385,7 +392,7 @@ export default function App() {
         let thumbnail = '';
         if (exportRef.current) {
             try {
-                thumbnail = exportRef.current.getScreenshot('image/png') || '';
+                thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current.getScreenshot('image/jpeg', 0.2) || '');
             } catch (e) {
                 console.warn("User Object thumbnail capture failed", e);
             }
@@ -694,15 +701,46 @@ export default function App() {
         }
 
         if (selectedIds.length > 0) {
-            handleColorChange(color);
+            const currentObjs = sceneObjectsRef.current;
+            const allTargetIds = new Set<string>();
+            const collectIds = (id: string) => {
+                allTargetIds.add(id);
+                currentObjs.filter(o => o.parentId === id).forEach(child => collectIds(child.id));
+            };
+            selectedIds.forEach(id => collectIds(id));
+
+            let strokesUpdated = false;
+            const updated = currentObjs.map(obj => {
+                // Strictly stroke-to-stroke! Never 3D geometry!
+                if (allTargetIds.has(obj.id) && obj.type === 'stroke') {
+                    strokesUpdated = true;
+                    return {
+                        ...obj,
+                        material: {
+                            ...obj.material,
+                            color
+                        },
+                        strokeData: obj.strokeData ? {
+                            ...obj.strokeData,
+                            thickness: (typeof thickness === 'number' && thickness > 0) ? thickness : obj.strokeData.thickness
+                        } : undefined
+                    };
+                }
+                return obj;
+            });
+
+            if (strokesUpdated) {
+                updateSceneState(updated);
+                addToHistory(updated);
+            }
         }
 
         showNotification(
             thickness 
-                ? (language === 'en' ? `Color ${color} & thickness ${thickness.toFixed(2)} copied!` : `¡Color ${color} y grosor ${thickness.toFixed(2)} copiados!`)
-                : (language === 'en' ? `Color ${color} copied!` : `¡Color ${color} copiado!`)
+                ? (language === 'en' ? `Stroke style (color ${color} & thickness ${thickness.toFixed(2)}) applied!` : `¡Estilo de trazo aplicado!`)
+                : (language === 'en' ? `Color ${color} applied!` : `¡Color ${color} copiado!`)
         );
-        setActiveTool(previousTool || 'brush');
+        setActiveTool(previousTool || 'select');
         setInstruction(null);
     };
 
@@ -745,6 +783,8 @@ export default function App() {
     };
 
     const normalizeObjectCenter = (obj: SceneObject): SceneObject => {
+        // Never normalize objects that are children of a group (preserves exact local relative coordinates)
+        if (obj.parentId) return obj;
         if (obj.type === 'stroke' && obj.strokeData && obj.strokeData.points.length > 0) {
             const pts = obj.strokeData.points;
             let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -901,10 +941,23 @@ export default function App() {
         setLayers(p => [nL, ...p]); setActiveLayerId(nL.id); return nL.id;
     };
 
-    const handleDeleteObject = (id: string) => {
-        const newObjects = sceneObjects.filter(o => o.id !== id);
+    const handleDeleteObject = (idOrIds: string | string[]) => {
+        const targetList = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+        if (targetList.length === 0) return;
+
+        const currentObjs = sceneObjectsRef.current;
+        const idsToDelete = new Set<string>();
+
+        const collectRecursive = (id: string) => {
+            idsToDelete.add(id);
+            currentObjs.filter(o => o.parentId === id).forEach(c => collectRecursive(c.id));
+        };
+        targetList.forEach(id => collectRecursive(id));
+
+        const newObjects = currentObjs.filter(o => !idsToDelete.has(o.id));
+        updateSceneState(newObjects);
         addToHistory(newObjects);
-        if (selectedIds.includes(id)) setSelectedIds([]);
+        setSelectedIds(prev => prev.filter(id => !idsToDelete.has(id)));
     };
 
     const handleUpdateObject = (id: string, updates: Partial<SceneObject>, saveToHistory: boolean = true) => {
@@ -1197,7 +1250,13 @@ export default function App() {
 
         if (Array.isArray(idOrIds)) {
             const rootIds = Array.from(new Set(idOrIds.map(resolveId)));
-            setSelectedIds(rootIds);
+            if (selectionMode === 'add') {
+                setSelectedIds(prev => Array.from(new Set([...prev, ...rootIds])));
+            } else if (selectionMode === 'subtract') {
+                setSelectedIds(prev => prev.filter(id => !rootIds.includes(id)));
+            } else {
+                setSelectedIds(rootIds);
+            }
         } else {
             const rootId = resolveId(idOrIds);
             if (selectionMode === 'add') {
@@ -1222,7 +1281,7 @@ export default function App() {
             let thumbnail = '';
             if (exportRef.current) {
                 try {
-                    thumbnail = exportRef.current.getScreenshot('image/png') || '';
+                    thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current.getScreenshot('image/jpeg', 0.2) || '');
                 } catch (e) {
                     console.warn("Thumbnail capture failed", e);
                 }
@@ -1260,7 +1319,14 @@ export default function App() {
                 projectsList.unshift(updatedProject);
             }
 
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(projectsList));
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(projectsList));
+            } catch (quotaErr) {
+                console.warn("Quota exceeded on saveProjectInternal, stripping old thumbnails...", quotaErr);
+                const pruned = projectsList.map((p, idx) => idx === 0 ? p : { ...p, thumbnail: '' });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+            }
+
             setIsMenuOpen(false);
             showNotification(language === 'en' ? `Project '${nameToUse}' saved internally!` : `¡Proyecto '${nameToUse}' guardado internamente!`);
         } catch (e) {
@@ -1577,22 +1643,33 @@ export default function App() {
             material: { color: '#ffffff', roughness: 0.5, metalness: 0, opacity: 1 }
         };
 
-        // 4. Update the top selected objects to be children of the new group, positioned relative to center
+        // Compute group world transform and its inverse
+        const groupMat = new THREE.Matrix4().makeTranslation(center.x, center.y, center.z);
+        const invGroupMat = groupMat.clone().invert();
+
+        // 4. Update the top selected objects to be children of the new group with exact relative transforms
         const topIdsSet = new Set(topSelectedObjs.map(o => o.id));
         const updatedObjects = currentObjs.map(o => {
             if (topIdsSet.has(o.id)) {
                 const wt = worldTransforms.get(o.id)!;
-                const euler = new THREE.Euler().setFromQuaternion(wt.quaternion);
+                const childWorldMat = new THREE.Matrix4().compose(wt.position, wt.quaternion, wt.scale);
+                const localMat = invGroupMat.clone().multiply(childWorldMat);
+                const localPos = new THREE.Vector3();
+                const localQuat = new THREE.Quaternion();
+                const localScale = new THREE.Vector3();
+                localMat.decompose(localPos, localQuat, localScale);
+                const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
+
                 return {
                     ...o,
                     parentId: groupId,
                     position: {
-                        x: wt.position.x - center.x,
-                        y: wt.position.y - center.y,
-                        z: wt.position.z - center.z
+                        x: localPos.x,
+                        y: localPos.y,
+                        z: localPos.z
                     },
-                    rotation: { x: euler.x, y: euler.y, z: euler.z },
-                    scale: { x: wt.scale.x, y: wt.scale.y, z: wt.scale.z }
+                    rotation: { x: localEuler.x, y: localEuler.y, z: localEuler.z },
+                    scale: { x: localScale.x, y: localScale.y, z: localScale.z }
                 };
             }
             return o;
@@ -2006,10 +2083,16 @@ export default function App() {
 
             <div className="absolute inset-0 z-0">
                 <SceneCanvas 
-                    objects={sceneObjects} visibleLayerIds={layers.filter(l => l.visible).map(l => l.id)} selectedIds={selectedIds} lockedLayerIds={layers.filter(l => l.locked).map(l => l.id)} onSelect={handleObjectSelect} onLassoSelect={(ids) => { 
+                    objects={sceneObjects} visibleLayerIds={layers.filter(l => l.visible).map(l => l.id)} selectedIds={selectedIds} lockedLayerIds={layers.filter(l => l.locked).map(l => l.id)} onSelect={handleObjectSelect}                    onLassoSelect={(ids) => { 
                         const currentObjs = sceneObjectsRef.current;
                         const rootIds = Array.from(new Set(ids.map(id => getRootParentId(id, currentObjs))));
-                        setSelectedIds(rootIds); 
+                        if (selectionMode === 'add') {
+                            setSelectedIds(prev => Array.from(new Set([...prev, ...rootIds])));
+                        } else if (selectionMode === 'subtract') {
+                            setSelectedIds(prev => prev.filter(id => !rootIds.includes(id)));
+                        } else {
+                            setSelectedIds(rootIds); 
+                        }
                         handleToolChange('select'); 
                     }} 
                     onTransform={(id, u) => { 
@@ -2066,43 +2149,6 @@ export default function App() {
                     <div className="pointer-events-auto flex flex-col items-center gap-4">
                         {selectedIds.length > 0 && (
                             <div className="flex items-center gap-2 animate-in slide-in-from-bottom-2 bg-white/95 backdrop-blur p-1.5 rounded-full shadow-xl border border-gray-200">
-                                 {/* Selection Color Button */}
-                                 <button
-                                     onClick={() => setIsSelectionColorPickerOpen(true)}
-                                     className="px-3 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1.5 text-gray-700 transition-colors"
-                                     title={language === 'en' ? "Change color of selected elements" : "Cambiar color a los elementos seleccionados"}
-                                 >
-                                     <div 
-                                         className="w-3.5 h-3.5 rounded-full border border-gray-300 shadow-2xs" 
-                                         style={{ 
-                                             backgroundColor: sceneObjects.find(o => selectedIds.includes(o.id))?.material?.color || brushColor 
-                                         }} 
-                                     />
-                                     <span>{language === 'en' ? 'Color' : 'Color'}</span>
-                                 </button>
-
-                                 {/* Smooth Selected Strokes Button */}
-                                 {selectedIds.some(id => sceneObjects.find(o => o.id === id)?.type === 'stroke') && (
-                                     <>
-                                         <button
-                                             onClick={handleSmoothSelected}
-                                             className="px-3 py-1.5 rounded-full hover:bg-blue-50 text-moda-3 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                                             title={language === 'en' ? "Smooth selected stroke geometry" : "Suavizar la geometría de los trazos seleccionados"}
-                                         >
-                                             <Icons.Sparkles size={14} />
-                                             <span>{language === 'en' ? 'Smooth' : 'Suavizar'}</span>
-                                         </button>
-                                         <button
-                                             onClick={handleActivatePipette}
-                                             className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-colors ${activeTool === 'pipette' ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-400' : 'hover:bg-gray-100 text-gray-700'}`}
-                                             title={language === 'en' ? "Match Style: Copy color and thickness from another stroke" : "Igualar estilo: Copiar color y grosor de otro trazo"}
-                                         >
-                                             <Icons.Pipette size={14} />
-                                             <span>{language === 'en' ? 'Match Style' : 'Igualar'}</span>
-                                         </button>
-                                     </>
-                                 )}
-
                                  {selectedIds.length > 1 && (
                                      <button onClick={handleGroup} className="px-3.5 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700">
                                          <Icons.Group size={14} /> {language === 'en' ? 'Group' : 'Agrupar'}
@@ -2320,8 +2366,7 @@ export default function App() {
                 currentObjects={sceneObjects}
                 currentLayers={layers}
                 language={language}
-                onLanguageChange={handleLanguageChange}
-                onCaptureThumbnail={() => exportRef.current?.getScreenshot('image/png') || ''}
+                onCaptureThumbnail={() => exportRef.current?.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current?.getScreenshot('image/jpeg', 0.2) || '')}
                 components={customComponents}
                 onInsertComponent={handleInsertComponent}
                 onDeleteComponent={handleDeleteComponent}

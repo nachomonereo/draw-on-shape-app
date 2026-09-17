@@ -21,6 +21,7 @@ export interface SceneExportRef {
     exportGLB: () => Promise<Blob>;
     exportDXF: () => Promise<Blob>;
     getScreenshot: (format?: 'image/png' | 'image/jpeg', scaleMultiplier?: number, transparent?: boolean) => string;
+    getThumbnail?: (maxWidth?: number, maxHeight?: number) => string;
     getCameraState: () => { position: Vector3, target: Vector3 };
 }
 
@@ -363,6 +364,33 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
                 }
                 gl.render(scene, camera);
             }
+        },
+        getThumbnail: (maxWidth = 160, maxHeight = 160) => {
+            try {
+                gl.render(scene, camera);
+                const tempCanvas = document.createElement('canvas');
+                const srcW = gl.domElement.width || 300;
+                const srcH = gl.domElement.height || 300;
+                const aspect = srcW / (srcH || 1);
+                let w = maxWidth;
+                let h = Math.round(maxWidth / aspect);
+                if (h > maxHeight) {
+                    h = maxHeight;
+                    w = Math.round(maxHeight * aspect);
+                }
+                tempCanvas.width = Math.max(1, w);
+                tempCanvas.height = Math.max(1, h);
+                const ctx = tempCanvas.getContext('2d');
+                if (ctx) {
+                    ctx.fillStyle = backgroundColor || '#ffffff';
+                    ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    ctx.drawImage(gl.domElement, 0, 0, tempCanvas.width, tempCanvas.height);
+                    return tempCanvas.toDataURL('image/jpeg', 0.65);
+                }
+            } catch (e) {
+                console.warn("getThumbnail capture failed", e);
+            }
+            return '';
         },
         getCameraState: () => {
              const ctrl = controls as any;
@@ -979,8 +1007,6 @@ const GroupComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSele
             onClick={(e) => {
                 if (!isLocked) {
                     e.stopPropagation();
-                    const pType = (e as any)?.nativeEvent?.pointerType || (e as any)?.pointerType;
-                    if (pType === 'touch') return;
                     onSelect(e);
                 }
             }}
@@ -1313,6 +1339,7 @@ const SceneContent = ({
     const { scene, camera, gl, raycaster, pointer } = useThree();
     const currentPoints = useRef<THREE.Vector3[]>([]);
     const isDrawing = useRef(false);
+    const pointerDownPosRef = useRef<{ x: number, y: number } | null>(null);
     const canvasRef = useRef<HTMLCanvasElement>(gl.domElement);
     const [previewPath, setPreviewPath] = useState<THREE.Vector3[]>([]);
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
@@ -2045,9 +2072,82 @@ const SceneContent = ({
         };
     }, [activeTool, camera, gl, objects, onLassoSelect]);
 
+    // Helper: 2D Screen-Space View-Aligned Stroke Eraser (strictly strokes, never geometries)
+    const eraseStrokesAt2DPointer = useCallback((clientX: number, clientY: number) => {
+        if (activeTool !== 'eraser') return;
+        const dom = gl.domElement;
+        const rect = dom.getBoundingClientRect();
+        const ptrPx = { x: clientX - rect.left, y: clientY - rect.top };
+        
+        const actualRadius = eraserSize || currentBrushSize || 0.2;
+        const target = (controlsRef.current as any)?.target || new THREE.Vector3(0, 0, 0);
+        const centerNdc = target.clone().project(camera);
+        const offsetPoint = target.clone().add(new THREE.Vector3(actualRadius, 0, 0));
+        const offsetNdc = offsetPoint.project(camera);
+        const radiusPx = Math.max(14, Math.abs((offsetNdc.x - centerNdc.x) * rect.width / 2));
+
+        const visibleStrokes = objects.filter(o => 
+            o.type === 'stroke' && 
+            o.strokeData && 
+            o.strokeData.points.length > 0 &&
+            visibleLayerIds.includes(o.layerId) &&
+            !lockedLayerIds.includes(o.layerId)
+        );
+
+        for (const stroke of visibleStrokes) {
+            // Compute stroke world transform
+            const chain: SceneObject[] = [stroke];
+            let currObj: SceneObject | undefined = stroke;
+            while (currObj.parentId) {
+                const parent = objects.find(p => p.id === currObj!.parentId);
+                if (!parent || chain.some(c => c.id === parent.id)) break;
+                chain.unshift(parent);
+                currObj = parent;
+            }
+            const worldMat = new THREE.Matrix4();
+            chain.forEach(node => {
+                const nodeMat = new THREE.Matrix4().compose(
+                    new THREE.Vector3(node.position.x, node.position.y, node.position.z),
+                    new THREE.Quaternion().setFromEuler(new THREE.Euler(node.rotation.x, node.rotation.y, node.rotation.z)),
+                    new THREE.Vector3(node.scale.x, node.scale.y, node.scale.z)
+                );
+                worldMat.multiply(nodeMat);
+            });
+
+            let strokeHit = false;
+            let hitWorldPoint: THREE.Vector3 | null = null;
+
+            for (const p of stroke.strokeData!.points) {
+                const pWorld = new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(worldMat);
+                const pNdc = pWorld.clone().project(camera);
+                if (pNdc.z < -1 || pNdc.z > 1) continue;
+
+                const px = (pNdc.x * 0.5 + 0.5) * rect.width;
+                const py = (-pNdc.y * 0.5 + 0.5) * rect.height;
+                const dist = Math.hypot(px - ptrPx.x, py - ptrPx.y);
+
+                if (dist <= radiusPx) {
+                    strokeHit = true;
+                    hitWorldPoint = pWorld;
+                    break;
+                }
+            }
+
+            if (strokeHit) {
+                if (eraserMode === 'object') {
+                    if (onErase) onErase(stroke.id);
+                } else if (eraserMode === 'partial' && onPartialErase && hitWorldPoint) {
+                    onPartialErase(stroke.id, hitWorldPoint, actualRadius);
+                }
+            }
+        }
+    }, [activeTool, gl, eraserSize, currentBrushSize, camera, objects, visibleLayerIds, lockedLayerIds, eraserMode, onErase, onPartialErase]);
+
     const handlePointerDown = useCallback((e: any) => {
         // Handled by dedicated screen listeners
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
+
+        pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
 
         // --- STYLUS ONLY DRAWING CHECK ---
         const isDrawingTool = activeTool === 'brush' || activeTool === 'eraser';
@@ -2064,37 +2164,29 @@ const SceneContent = ({
              return; 
         }
 
-        // --- PIPETTE / COLOR & THICKNESS SAMPLER ---
+        // --- PIPETTE / COLOR & THICKNESS SAMPLER (STROKE TO STROKE ONLY, NEVER GEOMETRY) ---
         if (activeTool === 'pipette') {
             const hits = raycaster.intersectObjects(scene.children, true);
-            const validHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
-            if (validHits.length > 0) {
-                let curr: THREE.Object3D | null = validHits[0].object;
-                let foundObj: SceneObject | undefined;
+            let foundStroke: SceneObject | undefined;
+            for (const hit of hits) {
+                let curr: THREE.Object3D | null = hit.object;
                 while (curr && curr !== scene) {
                     if (curr.userData?.id) {
-                        foundObj = objects.find(o => o.id === curr.userData.id);
-                        if (foundObj) break;
+                        const obj = objects.find(o => o.id === curr.userData.id);
+                        if (obj && obj.type === 'stroke') {
+                            foundStroke = obj;
+                            break;
+                        }
                     }
                     curr = curr.parent;
                 }
-                if (foundObj) {
-                    const color = foundObj.material?.color || '#000000';
-                    const thickness = (foundObj.type === 'stroke' && foundObj.strokeData) ? foundObj.strokeData.thickness : undefined;
-                    if (onPickColorAndThickness) {
-                        onPickColorAndThickness(color, thickness);
-                    }
-                    return;
-                }
-                const mesh = validHits[0].object as THREE.Mesh;
-                if (mesh.material) {
-                    const mat: any = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-                    if (mat && mat.color) {
-                        const hex = '#' + mat.color.getHexString();
-                        if (onPickColorAndThickness) {
-                            onPickColorAndThickness(hex, undefined);
-                        }
-                    }
+                if (foundStroke) break;
+            }
+            if (foundStroke) {
+                const color = foundStroke.material?.color || '#000000';
+                const thickness = foundStroke.strokeData?.thickness;
+                if (onPickColorAndThickness) {
+                    onPickColorAndThickness(color, thickness);
                 }
             }
             return;
@@ -2115,17 +2207,17 @@ const SceneContent = ({
             setPreviewPath([point]);
             if (controlsRef.current) controlsRef.current.enabled = false;
         } else if (activeTool === 'eraser') {
-             if (eraserMode === 'object') return;
-             isDrawing.current = true;
-             if (controlsRef.current) controlsRef.current.enabled = false;
+            isDrawing.current = true;
+            if (controlsRef.current) controlsRef.current.enabled = false;
+            eraseStrokesAt2DPointer(e.clientX, e.clientY);
         }
 
-    }, [activeTool, scene, raycaster, mode, selectedIds, eraserMode, camera, objects, onPickColorAndThickness]);
+    }, [activeTool, scene, raycaster, mode, selectedIds, camera, objects, onPickColorAndThickness, eraseStrokesAt2DPointer]);
 
     const handlePointerMove = useCallback((e: any) => {
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
 
-        // Update eraser visual cursor position
+        // Update eraser visual cursor position & perform 2D stroke erasing if dragging
         if (activeTool === 'eraser') {
             const hits = raycaster.intersectObjects(scene.children, true);
             if (hits.length > 0) {
@@ -2141,12 +2233,8 @@ const SceneContent = ({
                 setEraserCursorPos(pt);
             }
 
-            if (isDrawing.current && eraserMode === 'partial' && onPartialErase) {
-                const strokeHits = hits.filter(h => h.object.parent?.userData?.type === 'stroke');
-                if (strokeHits.length > 0) {
-                    const actualRadius = eraserSize || currentBrushSize || 0.2;
-                    onPartialErase(strokeHits[0].object.parent!.userData.id, strokeHits[0].point, actualRadius); 
-                }
+            if (isDrawing.current) {
+                eraseStrokesAt2DPointer(e.clientX, e.clientY);
             }
             return;
         } else {
@@ -2202,7 +2290,7 @@ const SceneContent = ({
             }
         }
 
-    }, [activeTool, raycaster, scene, eraserMode, onPartialErase, currentBrushSmoothing, eraserSize, currentBrushSize, eraserCursorPos, camera, gl]);
+    }, [activeTool, raycaster, scene, currentBrushSmoothing, eraserCursorPos, camera, gl, eraseStrokesAt2DPointer]);
 
     const handlePointerUp = useCallback(() => {
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
@@ -2221,9 +2309,14 @@ const SceneContent = ({
         }
     }, [activeTool, onStrokeComplete, camera]);
 
-    // Background interaction: deselect when touching empty screen (donde no hay objeto)
-    const handleMiss = (_e: any) => {
+    // Background interaction: deselect when touching empty screen (donde no hay objeto) without dragging
+    const handleMiss = (e: any) => {
         if (activeTool === 'select' && !isTransformingRef.current && !isDrawing.current && !isLassoing.current) {
+            const downPos = pointerDownPosRef.current;
+            if (downPos && e && typeof e.clientX === 'number') {
+                const dist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+                if (dist > 6) return; // Was a camera drag/orbit
+            }
             onSelect(null);
         }
     };
@@ -2326,18 +2419,14 @@ const SceneContent = ({
                             isLocked: isLock,
                             onSelect: (idOrEvent: any) => {
                                 if (!isLock) {
-                                    // User request: Fingers do NOT select objects, only stylus/pen or mouse
-                                    const pType = idOrEvent?.nativeEvent?.pointerType || idOrEvent?.pointerType;
-                                    if (pType === 'touch') {
-                                        return;
-                                    }
-
                                     if (activeTool === 'pipette') {
                                         if (idOrEvent && typeof idOrEvent !== 'string' && idOrEvent.stopPropagation) {
                                             idOrEvent.stopPropagation();
                                         }
+                                        // Strictly stroke-to-stroke, never 3D geometry
+                                        if (o.type !== 'stroke') return;
                                         const color = o.material?.color || '#000000';
-                                        const thickness = (o.type === 'stroke' && o.strokeData) ? o.strokeData.thickness : undefined;
+                                        const thickness = o.strokeData?.thickness;
                                         if (onPickColorAndThickness) {
                                             onPickColorAndThickness(color, thickness);
                                         }
@@ -2350,7 +2439,10 @@ const SceneContent = ({
                                     } else {
                                         idOrEvent.stopPropagation();
                                         if (activeTool === 'eraser' && eraserMode === 'object') {
-                                            if (onErase) onErase(rootId);
+                                            // Strictly erase strokes only, never 3D geometry
+                                            if (o.type === 'stroke' && onErase) {
+                                                onErase(rootId);
+                                            }
                                         } else if (activeTool === 'select' || activeTool === 'lasso' || activeTool === 'loft-step-1' || activeTool === 'loft-step-2') {
                                             onSelect(rootId);
                                         }
@@ -2636,10 +2728,29 @@ const SceneContent = ({
 export const SceneCanvas = (props: SceneProps) => {
     const objectsGroupRef = useRef<THREE.Group>(null);
     const [fovBadgeText, setFovBadgeText] = useState<string | null>(null);
+    const canvasDownPos = useRef<{ x: number, y: number } | null>(null);
 
     return (
-        <div className="relative w-full h-full" style={{ backgroundColor: props.backgroundColor || '#ffffff' }}>
-            <Canvas dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }}>
+        <div 
+            className="relative w-full h-full" 
+            style={{ backgroundColor: props.backgroundColor || '#ffffff' }}
+            onPointerDown={(e) => {
+                canvasDownPos.current = { x: e.clientX, y: e.clientY };
+            }}
+        >
+            <Canvas 
+                dpr={[1, 2]} 
+                gl={{ preserveDrawingBuffer: true, antialias: true }}
+                onPointerMissed={(e) => {
+                    if (props.activeTool === 'select') {
+                        if (canvasDownPos.current && e && typeof e.clientX === 'number') {
+                            const dist = Math.hypot(e.clientX - canvasDownPos.current.x, e.clientY - canvasDownPos.current.y);
+                            if (dist > 6) return; // Ignore drag/orbit
+                        }
+                        props.onSelect(null);
+                    }
+                }}
+            >
                 <SceneContent 
                     {...props} 
                     objectsGroupRef={objectsGroupRef} 
