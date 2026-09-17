@@ -6,7 +6,7 @@ import {
     File, Upload, Spline, Maximize, SplitSquareHorizontal, Image as ImageIcon, 
     PenTool, FoldVertical, Waves, Group, Ungroup, Minus, Shapes, LassoSelect, 
     Move3d, Droplets, Eraser, PaintBucket, Save, RotateCcw, Pentagon, Info,
-    FolderInput, Library, Package, ArrowDownToLine, Pipette, Wand2
+    FolderInput, Library, Package, ArrowDownToLine, Pipette, Wand2, Focus
 } from 'lucide-react';
 
 // Dedicated CAD Loft SVG icon representing surface bridging between two 3D profiles
@@ -92,5 +92,6 @@ export const Icons = {
     Package,
     ArrowDownToLine,
     Pipette,
-    Morph: MorphSculptIcon
+    Morph: MorphSculptIcon,
+    Isolate: Focus
 };

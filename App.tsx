@@ -202,6 +202,9 @@ export default function App() {
     const [morphRadius, setMorphRadius] = useState<number>(0.5);
     const [morphIntensity, setMorphIntensity] = useState<number>(1.0); 
 
+    // Isolate Mode State (null = show all, string[] = only show isolated IDs)
+    const [isolatedIds, setIsolatedIds] = useState<string[] | null>(null);
+
     // Background Color & Grid
     const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
     const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
@@ -973,6 +976,11 @@ export default function App() {
         updateSceneState(newObjects);
         addToHistory(newObjects);
         setSelectedIds(prev => prev.filter(id => !idsToDelete.has(id)));
+        setIsolatedIds(prev => {
+            if (!prev) return null;
+            const remaining = prev.filter(id => !idsToDelete.has(id));
+            return remaining.length > 0 ? remaining : null;
+        });
     };
 
     const handleUpdateObject = (id: string, updates: Partial<SceneObject>, saveToHistory: boolean = true) => {
@@ -1931,6 +1939,26 @@ export default function App() {
         showNotification(language === 'en' ? "Objects ungrouped" : "Objetos desagrupados");
     };
 
+    const handleToggleIsolate = () => {
+        if (isolatedIds !== null) {
+            setIsolatedIds(null);
+            showNotification(language === 'en' ? "Exited isolate mode" : "Modo aislado desactivado");
+        } else {
+            if (selectedIds.length === 0) return;
+            const currentObjs = sceneObjectsRef.current;
+            const allIsolated = new Set<string>();
+
+            const collectWithDescendants = (id: string) => {
+                allIsolated.add(id);
+                currentObjs.filter(o => o.parentId === id).forEach(c => collectWithDescendants(c.id));
+            };
+
+            selectedIds.forEach(id => collectWithDescendants(id));
+            setIsolatedIds(Array.from(allIsolated));
+            showNotification(language === 'en' ? `Isolated ${selectedIds.length} object(s)` : `${selectedIds.length} objeto(s) aislado(s)`);
+        }
+    };
+
     const handleAddObject = (type: ShapeType) => {
         const layerId = ensureActiveLayerType('geometry');
         const n: SceneObject = {
@@ -2309,7 +2337,7 @@ export default function App() {
                     morphIntensity={morphIntensity}
                     onMorphStroke={handleMorphStroke}
                     onMorphComplete={handleMorphComplete}
-                    isSymmetryEnabled={isSymmetryEnabled} symmetryX={symmetryPosition.x} symmetryAxis={symmetryAxis} symmetryPosition={symmetryPosition} areGeometryVisible={areGeometryVisible} onStrokeComplete={handleStrokeComplete} onErase={id => handleDeleteObject(id)} onPartialErase={handlePartialErase} onCameraDirectionUpdate={d => { capturedCameraDir.current = d; }} onUndo={undo} onRedo={redo}
+                    isSymmetryEnabled={isSymmetryEnabled} symmetryX={symmetryPosition.x} symmetryAxis={symmetryAxis} symmetryPosition={symmetryPosition} areGeometryVisible={areGeometryVisible} isolatedIds={isolatedIds} onStrokeComplete={handleStrokeComplete} onErase={id => handleDeleteObject(id)} onPartialErase={handlePartialErase} onCameraDirectionUpdate={d => { capturedCameraDir.current = d; }} onUndo={undo} onRedo={redo}
                     cameraAction={cameraAction}
                     onCameraActionHandled={() => setCameraAction(null)}
                     exportRef={exportRef}
@@ -2319,6 +2347,20 @@ export default function App() {
                     language={language}
                 />
             </div>
+
+            {/* FLOATING ISOLATE MODE BANNER */}
+            {isolatedIds !== null && (
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 bg-amber-500/95 text-white px-4 py-2 rounded-full shadow-2xl backdrop-blur text-xs font-bold animate-in slide-in-from-top-2 border border-amber-400">
+                    <Icons.Isolate size={16} />
+                    <span>{language === 'en' ? `Isolation Mode (${isolatedIds.length} objects)` : `Modo Aislado (${isolatedIds.length} objetos)`}</span>
+                    <button 
+                        onClick={() => { setIsolatedIds(null); showNotification(language === 'en' ? "Exited isolate mode" : "Modo aislado desactivado"); }}
+                        className="ml-2 bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer"
+                    >
+                        {language === 'en' ? 'Show All' : 'Mostrar Todo'}
+                    </button>
+                </div>
+            )}
 
             {showUI && (activeTool === 'brush' || activeTool === 'draw-plane' || activeTool === 'eraser' || selectedIds.length > 0 || activeTool === 'pipette') && (
                  <div className="absolute bottom-20 left-20 z-50 animate-in fade-in duration-200">
@@ -2353,6 +2395,18 @@ export default function App() {
                                          <Icons.Group size={14} /> {language === 'en' ? 'Ungroup' : 'Desagrupar'}
                                      </button>
                                  )}
+                                 <button 
+                                     onClick={handleToggleIsolate} 
+                                     className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                                         isolatedIds !== null 
+                                             ? 'bg-amber-500 text-white shadow-md' 
+                                             : 'hover:bg-amber-50 text-amber-700'
+                                     }`}
+                                     title={language === 'en' ? (isolatedIds !== null ? "Exit Isolate Mode" : "Isolate Selection (Hide Others)") : (isolatedIds !== null ? "Salir de Aislar" : "Aislar Selección (Ocultar Otros)")}
+                                 >
+                                     <Icons.Isolate size={14} /> 
+                                     <span>{isolatedIds !== null ? (language === 'en' ? 'Exit Isolate' : 'Salir de Aislar') : (language === 'en' ? 'Isolate' : 'Aislar')}</span>
+                                 </button>
                                  <button 
                                      onClick={handleSaveSelectionAsComponent} 
                                      className="px-3.5 py-1.5 rounded-full hover:bg-indigo-50 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition-colors"

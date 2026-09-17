@@ -56,6 +56,7 @@ interface SceneProps {
 
     // Geometry Visibility
     areGeometryVisible?: boolean;
+    isolatedIds?: string[] | null;
 
     // Scene Environment & Helpers
     isGridVisible?: boolean;
@@ -786,6 +787,9 @@ const StrokeComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSel
                 depthWrite={isSolid} 
                 renderOrder={isSelected ? 101 : 2} 
                 worldUnits 
+                polygonOffset
+                polygonOffsetFactor={-2}
+                polygonOffsetUnits={-2}
             />
             {data.strokeData.filled && <FilledStrokeMesh points={points} color={data.material.color} opacity={data.material.opacity ?? 1} />}
         </group>
@@ -1352,7 +1356,7 @@ const SceneContent = ({
     objects, visibleLayerIds, selectedIds, lockedLayerIds, onSelect, onLassoSelect, onTransform, onTransformMultiple, onTransformStart, onTransformEnd,
     mode, isDrawingMode, activeTool, eraserMode, eraserSize = 0.2, currentBrushColor, currentBrushSize, currentBrushSmoothing, 
     isSymmetryEnabled, symmetryX, symmetryAxis = 'x', symmetryPosition = {x:0,y:0,z:0},
-    areGeometryVisible, onStrokeComplete, onErase, onPartialErase,
+    areGeometryVisible, isolatedIds, onStrokeComplete, onErase, onPartialErase,
     cameraAction, onCameraActionHandled, exportRef,
     onCameraDirectionUpdate, onUndo, onRedo, fitViewTrigger, isoViewTrigger,
     objectsGroupRef, onLassoPointsChange, onFOVDisplayChange,
@@ -2029,6 +2033,7 @@ const SceneContent = ({
             const selected: string[] = [];
             objects.forEach(obj => {
                 if (!obj.visible) return;
+                if (isolatedIds && isolatedIds.length > 0 && !isolatedIds.includes(obj.id)) return;
 
                 if (obj.type === 'stroke' && obj.strokeData?.points) {
                     const objPos = new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z);
@@ -2112,7 +2117,7 @@ const SceneContent = ({
             if (controlsRef.current) controlsRef.current.enabled = true;
             updateSvgOverlay([]);
         };
-    }, [activeTool, camera, gl, objects, onLassoSelect]);
+    }, [activeTool, camera, gl, objects, onLassoSelect, isolatedIds]);
 
     // --- DEDICATED STROKE SCULPT / MORPH TOOL LISTENER (View-Plane Continuous Deform) ---
     useEffect(() => {
@@ -2331,7 +2336,8 @@ const SceneContent = ({
             o.strokeData && 
             o.strokeData.points.length > 0 &&
             visibleLayerIds.includes(o.layerId) &&
-            !lockedLayerIds.includes(o.layerId)
+            !lockedLayerIds.includes(o.layerId) &&
+            (!isolatedIds || isolatedIds.length === 0 || isolatedIds.includes(o.id))
         );
 
         for (const stroke of visibleStrokes) {
@@ -2381,7 +2387,7 @@ const SceneContent = ({
                 }
             }
         }
-    }, [activeTool, gl, eraserSize, currentBrushSize, camera, objects, visibleLayerIds, lockedLayerIds, eraserMode, onErase, onPartialErase]);
+    }, [activeTool, gl, eraserSize, currentBrushSize, camera, objects, visibleLayerIds, lockedLayerIds, eraserMode, onErase, onPartialErase, isolatedIds]);
 
     const handlePointerDown = useCallback((e: any) => {
         // Handled by dedicated screen listeners
@@ -2434,7 +2440,14 @@ const SceneContent = ({
 
         // --- BRUSH / ERASER START ---
         if (activeTool === 'brush') {
-            const hits = raycaster.intersectObjects(scene.children, true);
+            const dom = gl.domElement;
+            const rect = dom.getBoundingClientRect();
+            const mouseX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            const mouseY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            const downRay = new THREE.Raycaster();
+            downRay.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
+
+            const hits = downRay.intersectObjects(scene.children, true);
             const geometryHits = hits.filter(h => {
                 if (!h.object.visible) return false;
                 if (h.object.type !== 'Mesh') return false;
@@ -2452,12 +2465,24 @@ const SceneContent = ({
             
             if (geometryHits.length === 0) return; // STRICT: DO NOT DRAW if no geometry hit
 
+            // First hit is the front-most geometry in order of visual line of sight
             const firstHit = geometryHits[0];
             let point = firstHit.point.clone();
-            point.addScaledVector(raycaster.ray.direction, -0.01);
+            point.addScaledVector(downRay.ray.direction, -0.015);
 
             isDrawing.current = true;
-            drawingTargetObjectRef.current = firstHit.object;
+            
+            // Lock target strictly to this top-level geometry object
+            let targetObj: THREE.Object3D = firstHit.object;
+            let curr: THREE.Object3D | null = firstHit.object;
+            while (curr && curr !== scene) {
+                if (curr.userData?.id && curr.userData?.type !== 'stroke') {
+                    targetObj = curr;
+                    break;
+                }
+                curr = curr.parent;
+            }
+            drawingTargetObjectRef.current = targetObj;
             lastHitDistanceRef.current = firstHit.distance;
             currentPoints.current = [point];
             setPreviewPath([point]);
@@ -2468,7 +2493,7 @@ const SceneContent = ({
             eraseStrokesAt2DPointer(e.clientX, e.clientY);
         }
 
-    }, [activeTool, scene, raycaster, mode, selectedIds, camera, objects, onPickColorAndThickness, eraseStrokesAt2DPointer]);
+    }, [activeTool, scene, raycaster, mode, selectedIds, camera, objects, onPickColorAndThickness, eraseStrokesAt2DPointer, gl]);
 
     const handlePointerMove = useCallback((e: any) => {
         if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
@@ -2506,6 +2531,8 @@ const SceneContent = ({
         if (!isDrawing.current) return;
 
         if (activeTool === 'brush') {
+            if (!drawingTargetObjectRef.current) return;
+
             const rawEvents = (e.nativeEvent && typeof e.nativeEvent.getCoalescedEvents === 'function')
                 ? e.nativeEvent.getCoalescedEvents()
                 : [e];
@@ -2520,36 +2547,24 @@ const SceneContent = ({
                 const subRay = new THREE.Raycaster();
                 subRay.setFromCamera(new THREE.Vector2(subX, subY), camera);
 
-                const hits = subRay.intersectObjects(scene.children, true);
+                // STRICT: Raycast ONLY against the locked target geometry that the stroke started on!
+                // Any second geometry behind or around it along line of sight can NEVER receive stroke points or duplicate lines.
+                const hits = subRay.intersectObject(drawingTargetObjectRef.current, true);
                 const geometryHits = hits.filter(h => {
                     if (!h.object.visible) return false;
                     if (h.object.type !== 'Mesh') return false;
-                    if (h.object.userData?.id === 'symmetry-plane') return false;
                     if (h.object.userData?.type === 'stroke') return false;
                     if ((h.object as any).isLineSegments2 || (h.object as any).isLine2) return false;
-                    let curr: THREE.Object3D | null = h.object;
-                    while (curr) {
-                        if (curr.userData?.type === 'stroke') return false;
-                        if (curr.name === 'TransformControls' || (curr as any).isTransformControls) return false;
-                        curr = curr.parent;
-                    }
                     return true;
                 });
                 
                 if (geometryHits.length > 0) {
-                    // Strictly project onto the first (closest) geometry encountered along the camera ray
+                    // Strictly project onto the front-most face encountered on this geometry along camera ray
                     const frontHit = geometryHits[0];
-
-                    // Prevent jumping onto background geometries behind the active surface
-                    const lastDist = lastHitDistanceRef.current ?? frontHit.distance;
-                    if (Math.abs(frontHit.distance - lastDist) > 2.0 && frontHit.object !== drawingTargetObjectRef.current) {
-                        // Ray fell off front geometry onto a far background geometry -> do not project onto background
-                        continue;
-                    }
 
                     lastHitDistanceRef.current = frontHit.distance;
                     let point = frontHit.point.clone();
-                    point.addScaledVector(subRay.ray.direction, -0.01);
+                    point.addScaledVector(subRay.ray.direction, -0.015);
                     
                     if (currentBrushSmoothing > 0 && currentPoints.current.length > 0) {
                         const last = currentPoints.current[currentPoints.current.length - 1];
@@ -2676,6 +2691,17 @@ const SceneContent = ({
                     // Only render root objects (no parent) here. Children are rendered by GroupComponent.
                     if (obj.parentId) return null;
 
+                    // ISOLATE MODE FILTER
+                    if (isolatedIds && isolatedIds.length > 0) {
+                        const isObjIsolated = isolatedIds.includes(obj.id);
+                        if (obj.type === 'group') {
+                            const hasIsolatedChild = objects.some(c => c.parentId === obj.id && isolatedIds.includes(c.id));
+                            if (!isObjIsolated && !hasIsolatedChild) return null;
+                        } else {
+                            if (!isObjIsolated) return null;
+                        }
+                    }
+
                     if (obj.type === 'group') {
                         const children = objects.filter(c => c.parentId === obj.id);
                         const hasVisibleChild = children.length === 0 
@@ -2718,6 +2744,7 @@ const SceneContent = ({
                                     // STRICT: Fingers (touch) should NEVER select objects, only stylus/pen and mouse!
                                     const pType = idOrEvent?.pointerType || idOrEvent?.nativeEvent?.pointerType;
                                     if (pType === 'touch') return;
+                                    if (isolatedIds && isolatedIds.length > 0 && !isolatedIds.includes(rootId) && !isolatedIds.includes(o.id)) return;
 
                                     if (activeTool === 'pipette') {
                                         if (idOrEvent && typeof idOrEvent !== 'string' && idOrEvent.stopPropagation) {
@@ -2754,6 +2781,7 @@ const SceneContent = ({
                         if (o.type === 'group') {
                             const children = objects.filter(child => {
                                 if (child.parentId !== o.id) return false;
+                                if (isolatedIds && isolatedIds.length > 0 && !isolatedIds.includes(child.id) && !isolatedIds.includes(o.id)) return false;
                                 if (!visibleLayerIds.includes(child.layerId)) return false;
                                 if (child.type !== 'stroke' && !areGeometryVisible) return false;
                                 return true;
