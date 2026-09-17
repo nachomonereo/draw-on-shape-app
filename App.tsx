@@ -167,6 +167,7 @@ const ToolbarItem = ({
 export default function App() {
     const [user, setUser] = useState<UserProfile>({ name: 'Draw on Shape' });
     const [projectName, setProjectName] = useState("Untitled Project");
+    const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
     const [isEditingName, setIsEditingName] = useState(false);
     
     // Language State ('es' | 'en') - Default to 'en' (English)
@@ -1419,7 +1420,43 @@ export default function App() {
 
     const saveProjectInternal = async (customName?: string) => {
         try {
-            const nameToUse = customName || projectName || (language === 'en' ? "Untitled" : "Sin Título");
+            const data = localStorage.getItem(STORAGE_KEY);
+            let projectsList: Project[] = data ? JSON.parse(data) : [];
+
+            let nameToUse = (customName || projectName || '').trim() || (language === 'en' ? "Untitled Project" : "Proyecto Sin Título");
+
+            // Look up existing project:
+            // 1. By active currentProjectId (if loaded or already saved this session)
+            let existingIdx = currentProjectId ? projectsList.findIndex(p => p.id === currentProjectId) : -1;
+
+            // 2. If not matched by currentProjectId, check if another project already uses this exact name
+            if (existingIdx === -1) {
+                const sameNameIdx = projectsList.findIndex(p => p.name.toLowerCase() === nameToUse.toLowerCase());
+                if (sameNameIdx >= 0) {
+                    const confirmOverwrite = window.confirm(
+                        language === 'en'
+                            ? `A project named "${nameToUse}" already exists.\n\nDo you want to overwrite it?\nClick "OK" to overwrite, or "Cancel" to save as a new copy.`
+                            : `Ya existe un proyecto llamado "${nameToUse}".\n\n¿Deseas sobrescribirlo?\nHaz clic en "Aceptar" para sobrescribir o en "Cancelar" para guardar una copia nueva.`
+                    );
+                    if (confirmOverwrite) {
+                        existingIdx = sameNameIdx;
+                    } else {
+                        // Generate non-colliding copy name
+                        let count = 1;
+                        let newCopyName = `${nameToUse} (${count})`;
+                        while (projectsList.some(p => p.name.toLowerCase() === newCopyName.toLowerCase())) {
+                            count++;
+                            newCopyName = `${nameToUse} (${count})`;
+                        }
+                        nameToUse = newCopyName;
+                        setProjectName(newCopyName);
+                    }
+                }
+            }
+
+            const targetId = existingIdx >= 0 ? projectsList[existingIdx].id : (currentProjectId || generateId());
+            setCurrentProjectId(targetId);
+
             let thumbnail = '';
             if (exportRef.current) {
                 try {
@@ -1431,13 +1468,8 @@ export default function App() {
 
             const camState = exportRef.current?.getCameraState?.();
 
-            const data = localStorage.getItem(STORAGE_KEY);
-            let projectsList: Project[] = data ? JSON.parse(data) : [];
-
-            const existingIdx = projectsList.findIndex(p => p.name.toLowerCase() === nameToUse.toLowerCase());
-
             const updatedProject: Project = {
-                id: existingIdx >= 0 ? projectsList[existingIdx].id : generateId(),
+                id: targetId,
                 name: nameToUse,
                 updatedAt: Date.now(),
                 thumbnail,
@@ -1503,7 +1535,8 @@ export default function App() {
             historyIndexRef.current = 0;
             setHistory([INITIAL_SCENE]);
             setHistoryIndex(0);
-            setProjectName("Untitled Project");
+            setCurrentProjectId(null);
+            setProjectName(language === 'en' ? "Untitled Project" : "Proyecto Sin Título");
             setSavedViews([]);
             setBackgroundColor('#ffffff');
             setIsGridVisible(true);
@@ -1562,6 +1595,7 @@ export default function App() {
                     historyIndexRef.current = 0;
                     setHistory([data.sceneObjects]);
                     setHistoryIndex(0);
+                    if (data.id) setCurrentProjectId(data.id);
                     if (data.name) setProjectName(data.name);
                     if (data.savedViews) setSavedViews(data.savedViews);
                     if (data.cameraState) {
@@ -2605,6 +2639,7 @@ export default function App() {
                 onSaveSelectionAsComponent={handleSaveSelectionAsComponent}
                 selectedCount={selectedIds.length}
                 onLoadProject={(proj) => {
+                    setCurrentProjectId(proj.id);
                     updateSceneState(proj.sceneObjects);
                     setLayers(proj.layers);
                     historyRef.current = [proj.sceneObjects];

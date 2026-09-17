@@ -492,31 +492,28 @@ const ImageComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelec
     const height = data.params?.height || 4;
 
     return (
-        <group
+        <mesh 
+            ref={localRef}
             position={[data.position.x, data.position.y, data.position.z]}
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
+            onClick={!isLocked ? onSelect : undefined} 
+            userData={{ id: data.id, type: 'image', layerId: data.layerId }}
         >
-            <mesh 
-                ref={localRef}
-                onClick={!isLocked ? onSelect : undefined} 
-                userData={{ id: data.id, type: 'image', layerId: data.layerId }}
-            >
-                <planeGeometry args={[width, height]} />
-                <meshBasicMaterial 
-                    map={texture} 
-                    transparent={true} 
-                    opacity={isSelected ? 0.75 : (data.material.opacity ?? 0.85)} 
-                    side={THREE.DoubleSide} 
-                />
-            </mesh>
+            <planeGeometry args={[width, height]} />
+            <meshBasicMaterial 
+                map={texture} 
+                transparent={true} 
+                opacity={isSelected ? 0.75 : (data.material.opacity ?? 1.0)} 
+                side={THREE.DoubleSide} 
+            />
             {isSelected && (
                 <lineSegments>
                     <edgesGeometry args={[new THREE.PlaneGeometry(width, height)]} />
                     <lineBasicMaterial color="#FFE600" linewidth={2} />
                 </lineSegments>
             )}
-        </group>
+        </mesh>
     );
 });
 
@@ -1369,6 +1366,8 @@ const SceneContent = ({
     const canvasRef = useRef<HTMLCanvasElement>(gl.domElement);
     const [previewPath, setPreviewPath] = useState<THREE.Vector3[]>([]);
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
+    const drawingTargetObjectRef = useRef<THREE.Object3D | null>(null);
+    const lastHitDistanceRef = useRef<number | null>(null);
     
     // Lasso State
     const [lassoPoints, setLassoPoints] = useState<{x:number, y:number}[]>([]);
@@ -2131,7 +2130,9 @@ const SceneContent = ({
         let isMorphing = false;
         let prevPlanePoint = new THREE.Vector3();
         const morphPlane = new THREE.Plane();
+        const startPoint = new THREE.Vector3();
         const affectedStrokes = new Map<string, { 
+            grabbedData: { origWorldPos: THREE.Vector3; weight: number }[];
             currentPoints: THREE.Vector3[]; 
             invMatrix: THREE.Matrix4;
             hasChanged: boolean;
@@ -2173,16 +2174,17 @@ const SceneContent = ({
 
             const hits = ray.intersectObjects(scene.children, true);
             const hit = hits.find(h => h.object.type === 'Mesh' || (h.object as any).isLine);
-            let startPoint: THREE.Vector3;
+            let hitPos: THREE.Vector3;
             if (hit) {
-                startPoint = hit.point.clone();
+                hitPos = hit.point.clone();
             } else {
                 const d = controlsRef.current ? camera.position.distanceTo(controlsRef.current.target) : 10;
-                startPoint = ray.ray.origin.clone().addScaledVector(ray.ray.direction, d);
+                hitPos = ray.ray.origin.clone().addScaledVector(ray.ray.direction, d);
             }
 
-            morphPlane.setFromNormalAndCoplanarPoint(planeNormal, startPoint);
-            prevPlanePoint.copy(startPoint);
+            morphPlane.setFromNormalAndCoplanarPoint(planeNormal, hitPos);
+            startPoint.copy(hitPos);
+            prevPlanePoint.copy(hitPos);
 
             const targetStrokes = objects.filter(o => {
                 if (o.type !== 'stroke' || !o.strokeData || !o.strokeData.points) return false;
@@ -2193,6 +2195,9 @@ const SceneContent = ({
             });
 
             affectedStrokes.clear();
+            const radius = morphRadius || 0.5;
+            const intensity = morphIntensity ?? 1.0;
+
             targetStrokes.forEach(s => {
                 const pos = new THREE.Vector3(s.position.x, s.position.y, s.position.z);
                 const rot = new THREE.Euler(s.rotation.x, s.rotation.y, s.rotation.z);
@@ -2201,11 +2206,28 @@ const SceneContent = ({
                 const invMat = worldMat.clone().invert();
                 const worldPts = s.strokeData!.points.map(p => new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(worldMat));
 
-                affectedStrokes.set(s.id, {
-                    currentPoints: worldPts,
-                    invMatrix: invMat,
-                    hasChanged: false
+                let hasAnyGrabbed = false;
+                const grabbedData = worldPts.map(pt => {
+                    const dist = pt.distanceTo(hitPos);
+                    if (dist < radius) {
+                        hasAnyGrabbed = true;
+                        const factor = 1 - (dist / radius);
+                        // Hermite smoothstep falloff for organic, tear-free move brush
+                        const smoothFalloff = factor * factor * (3 - 2 * factor);
+                        const weight = Math.min(1.0, smoothFalloff * intensity);
+                        return { origWorldPos: pt.clone(), weight };
+                    }
+                    return { origWorldPos: pt.clone(), weight: 0 };
                 });
+
+                if (hasAnyGrabbed) {
+                    affectedStrokes.set(s.id, {
+                        grabbedData,
+                        currentPoints: worldPts,
+                        invMatrix: invMat,
+                        hasChanged: false
+                    });
+                }
             });
         };
 
@@ -2227,22 +2249,18 @@ const SceneContent = ({
 
             if (!isMorphing || !currPt) return;
 
-            const delta = currPt.clone().sub(prevPlanePoint);
-            if (delta.lengthSq() < 0.000001) return;
+            // Compute total drag displacement vector from drag start position
+            const totalDelta = currPt.clone().sub(startPoint);
+            if (totalDelta.lengthSq() < 0.000001) return;
 
             affectedStrokes.forEach((strokeInfo, strokeId) => {
                 let strokeModified = false;
-                const radius = morphRadius || 0.5;
-                const intensity = morphIntensity || 0.5;
 
-                for (let i = 0; i < strokeInfo.currentPoints.length; i++) {
-                    const pt = strokeInfo.currentPoints[i];
-                    const dist = pt.distanceTo(prevPlanePoint);
-                    if (dist < radius) {
-                        const factor = 1 - (dist / radius);
-                        const smoothFalloff = factor * factor * (3 - 2 * factor);
-                        const weight = smoothFalloff * ((morphIntensity ?? 1.0) * 3.5);
-                        pt.addScaledVector(delta, weight);
+                for (let i = 0; i < strokeInfo.grabbedData.length; i++) {
+                    const grab = strokeInfo.grabbedData[i];
+                    if (grab.weight > 0) {
+                        // True Grab / Move brush: point follows the pen drag with its grab weight
+                        strokeInfo.currentPoints[i].copy(grab.origWorldPos).addScaledVector(totalDelta, grab.weight);
                         strokeModified = true;
                     }
                 }
@@ -2255,8 +2273,6 @@ const SceneContent = ({
                     }
                 }
             });
-
-            prevPlanePoint.copy(currPt);
         };
 
         const onUp = () => {
@@ -2419,14 +2435,30 @@ const SceneContent = ({
         // --- BRUSH / ERASER START ---
         if (activeTool === 'brush') {
             const hits = raycaster.intersectObjects(scene.children, true);
-            const geometryHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
+            const geometryHits = hits.filter(h => {
+                if (!h.object.visible) return false;
+                if (h.object.type !== 'Mesh') return false;
+                if (h.object.userData?.id === 'symmetry-plane') return false;
+                if (h.object.userData?.type === 'stroke') return false;
+                if ((h.object as any).isLineSegments2 || (h.object as any).isLine2) return false;
+                let curr: THREE.Object3D | null = h.object;
+                while (curr) {
+                    if (curr.userData?.type === 'stroke') return false;
+                    if (curr.name === 'TransformControls' || (curr as any).isTransformControls) return false;
+                    curr = curr.parent;
+                }
+                return true;
+            });
             
             if (geometryHits.length === 0) return; // STRICT: DO NOT DRAW if no geometry hit
 
-            let point = geometryHits[0].point.clone();
+            const firstHit = geometryHits[0];
+            let point = firstHit.point.clone();
             point.addScaledVector(raycaster.ray.direction, -0.01);
 
             isDrawing.current = true;
+            drawingTargetObjectRef.current = firstHit.object;
+            lastHitDistanceRef.current = firstHit.distance;
             currentPoints.current = [point];
             setPreviewPath([point]);
             if (controlsRef.current) controlsRef.current.enabled = false;
@@ -2489,10 +2521,34 @@ const SceneContent = ({
                 subRay.setFromCamera(new THREE.Vector2(subX, subY), camera);
 
                 const hits = subRay.intersectObjects(scene.children, true);
-                const geometryHits = hits.filter(h => h.object.type === 'Mesh' && h.object.userData?.id !== 'symmetry-plane');
+                const geometryHits = hits.filter(h => {
+                    if (!h.object.visible) return false;
+                    if (h.object.type !== 'Mesh') return false;
+                    if (h.object.userData?.id === 'symmetry-plane') return false;
+                    if (h.object.userData?.type === 'stroke') return false;
+                    if ((h.object as any).isLineSegments2 || (h.object as any).isLine2) return false;
+                    let curr: THREE.Object3D | null = h.object;
+                    while (curr) {
+                        if (curr.userData?.type === 'stroke') return false;
+                        if (curr.name === 'TransformControls' || (curr as any).isTransformControls) return false;
+                        curr = curr.parent;
+                    }
+                    return true;
+                });
                 
                 if (geometryHits.length > 0) {
-                    let point = geometryHits[0].point.clone();
+                    // Strictly project onto the first (closest) geometry encountered along the camera ray
+                    const frontHit = geometryHits[0];
+
+                    // Prevent jumping onto background geometries behind the active surface
+                    const lastDist = lastHitDistanceRef.current ?? frontHit.distance;
+                    if (Math.abs(frontHit.distance - lastDist) > 2.0 && frontHit.object !== drawingTargetObjectRef.current) {
+                        // Ray fell off front geometry onto a far background geometry -> do not project onto background
+                        continue;
+                    }
+
+                    lastHitDistanceRef.current = frontHit.distance;
+                    let point = frontHit.point.clone();
                     point.addScaledVector(subRay.ray.direction, -0.01);
                     
                     if (currentBrushSmoothing > 0 && currentPoints.current.length > 0) {
@@ -2521,6 +2577,8 @@ const SceneContent = ({
 
         if (isDrawing.current) {
             isDrawing.current = false;
+            drawingTargetObjectRef.current = null;
+            lastHitDistanceRef.current = null;
             const finalPoints = [...currentPoints.current];
             currentPoints.current = [];
             setPreviewPath([]);

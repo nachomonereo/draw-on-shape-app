@@ -35,7 +35,7 @@ const LoftIcon: React.FC<{ size?: number; className?: string }> = ({ size = 20, 
     </svg>
 );
 
-// Dedicated 3D Sculpt / Stroke Deform Icon
+// Dedicated 3D Sculpt / Stroke Deform Icon matching user design (arrowhead depressing surface block)
 const MorphSculptIcon: React.FC<{ size?: number; className?: string }> = ({ size = 20, className }) => (
     <svg 
         width={size} 
@@ -48,13 +48,10 @@ const MorphSculptIcon: React.FC<{ size?: number; className?: string }> = ({ size
         strokeLinejoin="round" 
         className={className}
     >
-        {/* Deformed 3D curve with wave sculpt profile */}
-        <path d="M3 16c3-1 6-7 10-7s5 6 8 4" />
-        {/* Sculpting falloff indicator ring */}
-        <circle cx="13" cy="9" r="3.5" strokeDasharray="2 2" />
-        {/* Interactive push arrows */}
-        <path d="M13 3v2" />
-        <path d="M10 4l3-2 3 2" />
+        {/* Downward pushing arrowhead with indented top notch */}
+        <path d="M7 2L12 11.5L17 2L12 4.5Z" />
+        {/* Deformed surface block with smooth concave depression */}
+        <path d="M2 7.5h4.5c1.8 0 2.5 7 5.5 7s3.7-7 5.5-7H22v12.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z" />
     </svg>
 );
 

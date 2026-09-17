@@ -126,6 +126,51 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
             }
         }
 
+        const existingIdx = projects.findIndex(p => p.name.toLowerCase() === nameToUse.toLowerCase());
+        if (existingIdx >= 0) {
+            const confirmOverwrite = window.confirm(
+                language === 'en'
+                    ? `A project named "${nameToUse}" already exists.\n\nDo you want to overwrite it?\nClick "OK" to overwrite, or "Cancel" to save as a new copy.`
+                    : `Ya existe un proyecto llamado "${nameToUse}".\n\n¿Deseas sobrescribirlo?\nHaz clic en "Aceptar" para sobrescribir o en "Cancelar" para guardar una copia nueva.`
+            );
+            if (confirmOverwrite) {
+                const targetProject = projects[existingIdx];
+                const updatedProject: Project = {
+                    ...targetProject,
+                    name: nameToUse,
+                    updatedAt: Date.now(),
+                    thumbnail: thumbUrl,
+                    sceneObjects: currentObjects,
+                    layers: currentLayers
+                };
+                const updated = projects.map((p, idx) => idx === existingIdx ? updatedProject : p);
+                saveProjectsToStorage(updated);
+                setProjectName('');
+                showToast(t('projectSaved', { name: nameToUse }));
+                return;
+            } else {
+                let count = 1;
+                let newCopyName = `${nameToUse} (${count})`;
+                while (projects.some(p => p.name.toLowerCase() === newCopyName.toLowerCase())) {
+                    count++;
+                    newCopyName = `${nameToUse} (${count})`;
+                }
+                const newProject: Project = {
+                    id: generateId(),
+                    name: newCopyName,
+                    updatedAt: Date.now(),
+                    thumbnail: thumbUrl,
+                    sceneObjects: currentObjects,
+                    layers: currentLayers
+                };
+                const updated = [newProject, ...projects];
+                saveProjectsToStorage(updated);
+                setProjectName('');
+                showToast(t('projectSaved', { name: newCopyName }));
+                return;
+            }
+        }
+
         const newProject: Project = {
             id: generateId(),
             name: nameToUse,
