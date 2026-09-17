@@ -1967,6 +1967,8 @@ const SceneContent = ({
 
         const onDown = (e: PointerEvent) => {
             if (e.button !== 0) return;
+            // STYLUS / PEN ONLY: touch (fingers) is ignored so fingers can orbit / navigate the 3D scene freely
+            if (e.pointerType === 'touch') return;
 
             if (controlsRef.current) controlsRef.current.enabled = false;
             isLassoing.current = true;
@@ -1975,6 +1977,7 @@ const SceneContent = ({
         };
 
         const onMove = (e: PointerEvent) => {
+            if (e.pointerType === 'touch') return;
             if (!isLassoing.current) return;
 
             const current = { x: e.clientX, y: e.clientY };
@@ -1988,6 +1991,7 @@ const SceneContent = ({
         };
 
         const onUp = (e: PointerEvent) => {
+            if (e.pointerType === 'touch') return;
             if (!isLassoing.current) return;
             isLassoing.current = false;
             if (controlsRef.current) controlsRef.current.enabled = true;

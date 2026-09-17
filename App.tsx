@@ -1087,6 +1087,10 @@ export default function App() {
             });
         }
         addToHistory([...sceneObjectsRef.current, ...toAdd]);
+        if (isolatedIds !== null) {
+            const newIds = toAdd.map(o => o.id);
+            setIsolatedIds(prev => prev ? [...prev, ...newIds] : newIds);
+        }
         if (activeTool === 'draw-plane') { setSelectedIds([nS.id]); handleToolChange('select'); }
     };
 
@@ -1256,6 +1260,9 @@ export default function App() {
 
                 addToHistory([...sceneObjectsRef.current, imageObj]);
                 setSelectedIds([imageObj.id]);
+                if (isolatedIds !== null) {
+                    setIsolatedIds(prev => prev ? [...prev, imageObj.id] : [imageObj.id]);
+                }
                 handleToolChange('select');
                 showNotification(language === 'en' ? "Image reference plane added" : "Plano de imagen añadido");
             };
@@ -1891,6 +1898,9 @@ export default function App() {
         updateSceneState(newAll);
         addToHistory(newAll);
         setSelectedIds([groupId]);
+        if (isolatedIds !== null) {
+            setIsolatedIds(prev => prev ? [...prev, groupId] : [groupId]);
+        }
         handleToolChange('select');
         showNotification(language === 'en' ? "Objects grouped" : "Objetos agrupados");
     };
@@ -1983,6 +1993,9 @@ export default function App() {
         };
         addToHistory([...sceneObjects, n]);
         setSelectedIds([n.id]);
+        if (isolatedIds !== null) {
+            setIsolatedIds(prev => prev ? [...prev, n.id] : [n.id]);
+        }
         handleToolChange('select');
     };
 
@@ -1994,6 +2007,10 @@ export default function App() {
 
         addToHistory([...currentObjs, ...newObjects]);
         setSelectedIds([newRootId]);
+        if (isolatedIds !== null) {
+            const newIds = newObjects.map(o => o.id);
+            setIsolatedIds(prev => prev ? [...prev, ...newIds] : newIds);
+        }
         handleToolChange('select'); 
         setTransformMode('translate');
     };
@@ -2046,12 +2063,15 @@ export default function App() {
             loftData: { 
                 strokeIdA: loftSelection[0], 
                 strokeIdB: loftSelection[1], 
-                strokeIds: loftSelection,
+                strokeIds: loftSelection, 
                 segments: 30 
             }
         };
 
         addToHistory([...sceneObjects, o]);
+        if (isolatedIds !== null) {
+            setIsolatedIds(prev => prev ? [...prev, o.id] : [o.id]);
+        }
         setLoftSelection([]);
         handleToolChange('select');
         setSelectedIds([o.id]);
@@ -2329,7 +2349,7 @@ export default function App() {
                             addToHistory(sceneObjectsRef.current);
                         }
                     }} 
-                    mode={transformMode} isDrawingMode={activeTool === 'brush' || activeTool === 'eraser' || activeTool === 'draw-plane' || activeTool === 'morph' || (activeTool === 'select' && selectionMode === 'lasso') || activeTool === 'lasso'} activeTool={(activeTool === 'select' && selectionMode === 'lasso') ? 'lasso' : (activeTool === 'shapes' || activeTool === 'view' ? 'select' : activeTool)} eraserMode={eraserMode} eraserSize={eraserSize}
+                    mode={transformMode} isDrawingMode={activeTool === 'brush' || activeTool === 'eraser' || activeTool === 'draw-plane' || activeTool === 'morph'} activeTool={(activeTool === 'select' && selectionMode === 'lasso') ? 'lasso' : (activeTool === 'shapes' || activeTool === 'view' ? 'select' : activeTool)} eraserMode={eraserMode} eraserSize={eraserSize}
                     currentBrushColor={brushColor} 
                     currentBrushSize={brushSize} 
                     currentBrushSmoothing={brushSmoothing}
@@ -2381,10 +2401,10 @@ export default function App() {
             )}
             
             {showUI && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 pointer-events-none animate-in fade-in duration-200">
-                    <div className="pointer-events-auto flex flex-col items-center gap-4">
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center pointer-events-none animate-in fade-in duration-200">
+                    <div className="pointer-events-auto flex flex-col items-center">
                         {selectedIds.length > 0 && (
-                            <div className="flex items-center gap-2 animate-in slide-in-from-bottom-2 bg-white/95 backdrop-blur p-1.5 rounded-full shadow-xl border border-gray-200">
+                            <div className="flex items-center gap-2 mb-16 animate-in slide-in-from-bottom-2 bg-white/95 backdrop-blur p-1.5 rounded-full shadow-xl border border-gray-200 z-50">
                                  {selectedIds.length > 1 && (
                                      <button onClick={handleGroup} className="px-3.5 py-1.5 rounded-full hover:bg-gray-100 text-xs font-bold flex items-center gap-1 text-gray-700">
                                          <Icons.Group size={14} /> {language === 'en' ? 'Group' : 'Agrupar'}
