@@ -192,9 +192,13 @@ export default function App() {
     const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
     
     // Tools
-    const [activeTool, setActiveTool] = useState<'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft-step-1' | 'loft-step-2' | 'pipette'>('brush'); 
+    const [activeTool, setActiveTool] = useState<'select' | 'brush' | 'eraser' | 'draw-plane' | 'lasso' | 'shapes' | 'view' | 'loft-step-1' | 'loft-step-2' | 'pipette' | 'morph'>('brush'); 
     const [previousTool, setPreviousTool] = useState<'brush' | 'select'>('brush');
     const [eraserMode, setEraserMode] = useState<'object' | 'partial'>('partial'); 
+    
+    // Morph Tool (Stroke Sculpt)
+    const [morphRadius, setMorphRadius] = useState<number>(0.5);
+    const [morphIntensity, setMorphIntensity] = useState<number>(0.5); 
 
     // Background Color & Grid
     const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
@@ -261,6 +265,7 @@ export default function App() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const projectLoadRef = useRef<HTMLInputElement>(null);
     const projectImportRef = useRef<HTMLInputElement>(null); 
+    const imagePlaneInputRef = useRef<HTMLInputElement>(null);
     
     const exportRef = useRef<SceneExportRef>(null);
 
@@ -392,7 +397,7 @@ export default function App() {
         let thumbnail = '';
         if (exportRef.current) {
             try {
-                thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current.getScreenshot('image/jpeg', 0.2) || '');
+                thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(360, 360) : (exportRef.current.getScreenshot('image/jpeg', 0.85) || '');
             } catch (e) {
                 console.warn("User Object thumbnail capture failed", e);
             }
@@ -1063,7 +1068,7 @@ export default function App() {
                 strokeData: { points: symPoints, thickness: brushSize, filled: isStrokeFilled }
             });
         }
-        addToHistory([...sceneObjects, ...toAdd]);
+        addToHistory([...sceneObjectsRef.current, ...toAdd]);
         if (activeTool === 'draw-plane') { setSelectedIds([nS.id]); handleToolChange('select'); }
     };
 
@@ -1111,6 +1116,111 @@ export default function App() {
         if (!obj) return;
         const updated = { ...obj, material: { ...obj.material, color } };
         handleUpdateObject(id, updated);
+    };
+
+    // --- MORPH TOOL HANDLERS ---
+    const handleMorphStroke = (strokeId: string, updatedPoints: Vector3[]) => {
+        const currentList = sceneObjectsRef.current;
+        const target = currentList.find(o => o.id === strokeId);
+        if (!target || !target.strokeData) return;
+
+        const updatedList = currentList.map(o => {
+            if (o.id === strokeId) {
+                return {
+                    ...o,
+                    strokeData: {
+                        ...o.strokeData!,
+                        points: updatedPoints
+                    }
+                };
+            }
+            return o;
+        });
+        updateSceneState(updatedList);
+    };
+
+    const handleMorphComplete = (updates: { id: string; points: Vector3[] }[]) => {
+        if (updates.length === 0) return;
+        const currentList = sceneObjectsRef.current;
+        const updateMap = new Map(updates.map(u => [u.id, u.points]));
+        const updatedList = currentList.map(o => {
+            const pts = updateMap.get(o.id);
+            if (pts && o.strokeData) {
+                return {
+                    ...o,
+                    strokeData: {
+                        ...o.strokeData,
+                        points: pts
+                    }
+                };
+            }
+            return o;
+        });
+        addToHistory(updatedList);
+    };
+
+    // --- IMAGE REFERENCE PLANE HANDLERS ---
+    const handleTriggerImagePlaneUpload = () => {
+        if (imagePlaneInputRef.current) {
+            imagePlaneInputRef.current.value = '';
+            imagePlaneInputRef.current.click();
+        }
+    };
+
+    const handleImagePlaneUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const dataUrl = event.target?.result as string;
+            if (!dataUrl) return;
+
+            const img = new Image();
+            img.onload = () => {
+                const naturalW = img.naturalWidth || 1;
+                const naturalH = img.naturalHeight || 1;
+                const aspect = naturalW / naturalH;
+                
+                let w = 4;
+                let h = 4;
+                if (aspect >= 1) {
+                    h = 4 / aspect;
+                } else {
+                    w = 4 * aspect;
+                }
+
+                const targetLayerId = ensureActiveLayerType('geometry');
+                const imageObj: SceneObject = {
+                    id: generateId(),
+                    layerId: targetLayerId,
+                    name: file.name.replace(/\.[^/.]+$/, "") || 'Image Plane',
+                    type: 'image',
+                    visible: true,
+                    position: { x: 0, y: h * 0.5, z: 0 },
+                    rotation: { x: 0, y: 0, z: 0 },
+                    scale: { x: 1, y: 1, z: 1 },
+                    material: {
+                        color: '#ffffff',
+                        roughness: 0.5,
+                        metalness: 0.0,
+                        opacity: 0.85
+                    },
+                    params: {
+                        width: parseFloat(w.toFixed(2)),
+                        height: parseFloat(h.toFixed(2))
+                    },
+                    url: dataUrl
+                };
+
+                addToHistory([...sceneObjectsRef.current, imageObj]);
+                setSelectedIds([imageObj.id]);
+                handleToolChange('select');
+                showNotification(language === 'en' ? "Image reference plane added" : "Plano de imagen de referencia añadido");
+            };
+            img.src = dataUrl;
+        };
+        reader.readAsDataURL(file);
     };
 
     const getObjectWorldTransform = (obj: SceneObject, allObjects: SceneObject[]): { position: THREE.Vector3, quaternion: THREE.Quaternion, scale: THREE.Vector3 } => {
@@ -1281,7 +1391,7 @@ export default function App() {
             let thumbnail = '';
             if (exportRef.current) {
                 try {
-                    thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current.getScreenshot('image/jpeg', 0.2) || '');
+                    thumbnail = exportRef.current.getThumbnail ? exportRef.current.getThumbnail(360, 360) : (exportRef.current.getScreenshot('image/jpeg', 0.85) || '');
                 } catch (e) {
                     console.warn("Thumbnail capture failed", e);
                 }
@@ -1880,6 +1990,7 @@ export default function App() {
             />
             <input type="file" ref={projectLoadRef} onChange={handleLoadProject} accept=".json,.drawonshape.json" style={{ display: 'none' }} />
             <input type="file" ref={projectImportRef} onChange={handleInsertProject} accept=".json,.drawonshape.json" style={{ display: 'none' }} />
+            <input type="file" ref={imagePlaneInputRef} onChange={handleImagePlaneUpload} accept="image/*" style={{ display: 'none' }} />
 
             {/* TOAST NOTIFICATION POPUP */}
             {toastMessage && (
@@ -2111,10 +2222,14 @@ export default function App() {
                             addToHistory(sceneObjectsRef.current);
                         }
                     }} 
-                    mode={transformMode} isDrawingMode={activeTool === 'brush' || activeTool === 'eraser' || activeTool === 'draw-plane' || (activeTool === 'select' && selectionMode === 'lasso') || activeTool === 'lasso'} activeTool={(activeTool === 'select' && selectionMode === 'lasso') ? 'lasso' : (activeTool === 'shapes' || activeTool === 'view' ? 'select' : activeTool)} eraserMode={eraserMode} eraserSize={eraserSize}
+                    mode={transformMode} isDrawingMode={activeTool === 'brush' || activeTool === 'eraser' || activeTool === 'draw-plane' || activeTool === 'morph' || (activeTool === 'select' && selectionMode === 'lasso') || activeTool === 'lasso'} activeTool={(activeTool === 'select' && selectionMode === 'lasso') ? 'lasso' : (activeTool === 'shapes' || activeTool === 'view' ? 'select' : activeTool)} eraserMode={eraserMode} eraserSize={eraserSize}
                     currentBrushColor={brushColor} 
                     currentBrushSize={brushSize} 
-                    currentBrushSmoothing={brushSmoothing} // Pass new prop
+                    currentBrushSmoothing={brushSmoothing}
+                    morphRadius={morphRadius}
+                    morphIntensity={morphIntensity}
+                    onMorphStroke={handleMorphStroke}
+                    onMorphComplete={handleMorphComplete}
                     isSymmetryEnabled={isSymmetryEnabled} symmetryX={symmetryPosition.x} symmetryAxis={symmetryAxis} symmetryPosition={symmetryPosition} areGeometryVisible={areGeometryVisible} onStrokeComplete={handleStrokeComplete} onErase={id => handleDeleteObject(id)} onPartialErase={handlePartialErase} onCameraDirectionUpdate={d => { capturedCameraDir.current = d; }} onUndo={undo} onRedo={redo}
                     cameraAction={cameraAction}
                     onCameraActionHandled={() => setCameraAction(null)}
@@ -2220,6 +2335,49 @@ export default function App() {
                                                  />
                                              </div>
                                          )}
+                                     </div>
+                                 </ToolbarItem>
+
+                                 <ToolbarItem 
+                                     active={activeTool === 'morph'} 
+                                     onClick={() => { handleToolChange('morph'); setLoftSelection([]); setInstruction(language === 'en' ? "Drag to sculpt/deform strokes in view plane" : "Arrastra para deformar trazos en plano de visión"); }} 
+                                     icon={Icons.Morph} 
+                                     tooltipText={language === 'en' ? "Morph (Sculpt Strokes)" : "Deformar trazos (Morph)"} 
+                                     onHover={setHoverInfo} 
+                                     onLeave={() => setHoverInfo(null)}
+                                 >
+                                     <div className="flex flex-col gap-2 p-1 min-w-[150px]">
+                                         <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-1">Morph Sculpt</div>
+                                         <div className="flex flex-col gap-1 px-1">
+                                             <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
+                                                 <span>RADIUS</span>
+                                                 <span className="text-gray-600 font-mono">{morphRadius.toFixed(2)}</span>
+                                             </div>
+                                             <input 
+                                                 type="range" 
+                                                 min="0.1" 
+                                                 max="2.5" 
+                                                 step="0.05" 
+                                                 value={morphRadius} 
+                                                 onChange={(e) => setMorphRadius(parseFloat(e.target.value))}
+                                                 className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
+                                             />
+                                         </div>
+                                         <div className="flex flex-col gap-1 px-1">
+                                             <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
+                                                 <span>INTENSITY</span>
+                                                 <span className="text-gray-600 font-mono">{morphIntensity.toFixed(2)}</span>
+                                             </div>
+                                             <input 
+                                                 type="range" 
+                                                 min="0.05" 
+                                                 max="1.0" 
+                                                 step="0.05" 
+                                                 value={morphIntensity} 
+                                                 onChange={(e) => setMorphIntensity(parseFloat(e.target.value))}
+                                                 className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
+                                             />
+                                         </div>
                                      </div>
                                  </ToolbarItem>
                                 
@@ -2328,6 +2486,13 @@ export default function App() {
                                           >
                                               <Icons.Loft size={18} />
                                           </button>
+                                          <button 
+                                              onClick={handleTriggerImagePlaneUpload} 
+                                              className="p-2 hover:bg-gray-100 rounded-lg text-gray-600" 
+                                              title={language === 'en' ? "Image Reference Plane" : "Plano de Imagen (Referencia)"}
+                                          >
+                                              <Icons.Image size={18} />
+                                          </button>
                                      </div>
                                  </ToolbarItem>
                               </div>
@@ -2366,7 +2531,7 @@ export default function App() {
                 currentObjects={sceneObjects}
                 currentLayers={layers}
                 language={language}
-                onCaptureThumbnail={() => exportRef.current?.getThumbnail ? exportRef.current.getThumbnail(160, 160) : (exportRef.current?.getScreenshot('image/jpeg', 0.2) || '')}
+                onCaptureThumbnail={() => exportRef.current?.getThumbnail ? exportRef.current.getThumbnail(360, 360) : (exportRef.current?.getScreenshot('image/jpeg', 0.85) || '')}
                 components={customComponents}
                 onInsertComponent={handleInsertComponent}
                 onDeleteComponent={handleDeleteComponent}

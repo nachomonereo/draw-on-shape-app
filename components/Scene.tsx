@@ -76,6 +76,12 @@ interface SceneProps {
     onUndo?: () => void;
     onRedo?: () => void;
     
+    // Morph Tool Props
+    morphRadius?: number;
+    morphIntensity?: number;
+    onMorphStroke?: (strokeId: string, updatedPoints: THREE.Vector3[]) => void;
+    onMorphComplete?: (updates: { id: string; points: Vector3[] }[]) => void;
+
     // Lasso & FOV feedback
     onLassoPointsChange?: (points: { x: number; y: number }[]) => void;
     onFOVDisplayChange?: (text: string | null) => void;
@@ -365,7 +371,7 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
                 gl.render(scene, camera);
             }
         },
-        getThumbnail: (maxWidth = 160, maxHeight = 160) => {
+        getThumbnail: (maxWidth = 360, maxHeight = 360) => {
             try {
                 gl.render(scene, camera);
                 const tempCanvas = document.createElement('canvas');
@@ -385,7 +391,7 @@ const SceneExporter = forwardRef<SceneExportRef, { objects: SceneObject[], objec
                     ctx.fillStyle = backgroundColor || '#ffffff';
                     ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
                     ctx.drawImage(gl.domElement, 0, 0, tempCanvas.width, tempCanvas.height);
-                    return tempCanvas.toDataURL('image/jpeg', 0.65);
+                    return tempCanvas.toDataURL('image/jpeg', 0.85);
                 }
             } catch (e) {
                 console.warn("getThumbnail capture failed", e);
@@ -482,18 +488,35 @@ const ImageComponent = React.forwardRef<THREE.Mesh, { data: SceneObject; isSelec
     const localRef = useRef<THREE.Mesh>(null);
     useImperativeHandle(ref, () => localRef.current!);
 
+    const width = data.params?.width || 4;
+    const height = data.params?.height || 4;
+
     return (
-        <mesh 
-            ref={localRef}
-            onClick={!isLocked ? onSelect : undefined} 
-            userData={{ id: data.id, type: 'image', layerId: data.layerId }}
+        <group
             position={[data.position.x, data.position.y, data.position.z]}
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
         >
-            <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial map={texture} transparent={true} opacity={data.material.opacity ?? 0.8} side={THREE.DoubleSide} />
-        </mesh>
+            <mesh 
+                ref={localRef}
+                onClick={!isLocked ? onSelect : undefined} 
+                userData={{ id: data.id, type: 'image', layerId: data.layerId }}
+            >
+                <planeGeometry args={[width, height]} />
+                <meshBasicMaterial 
+                    map={texture} 
+                    transparent={true} 
+                    opacity={isSelected ? 0.75 : (data.material.opacity ?? 0.85)} 
+                    side={THREE.DoubleSide} 
+                />
+            </mesh>
+            {isSelected && (
+                <lineSegments>
+                    <edgesGeometry args={[new THREE.PlaneGeometry(width, height)]} />
+                    <lineBasicMaterial color="#FFE600" linewidth={2} />
+                </lineSegments>
+            )}
+        </group>
     );
 });
 
@@ -742,17 +765,17 @@ const StrokeComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSel
             rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
             scale={[data.scale.x, data.scale.y, data.scale.z]}
         >
-            {/* Outline highlight in vivid yellow - rendered with renderOrder 1 to prevent flickering */}
+            {/* Outline highlight in vivid yellow - rendered with depthTest false and renderOrder 100 to stay 100% visible from any angle */}
             {isSelected && (
                 <Line 
                     points={points} 
-                    color="#FACC15" 
-                    lineWidth={data.strokeData.thickness * 1.5 + 0.03} 
+                    color="#FFE600" 
+                    lineWidth={data.strokeData.thickness * 2.2 + 0.06} 
                     opacity={1} 
                     transparent={false} 
-                    depthTest={true} 
+                    depthTest={false} 
                     depthWrite={false}
-                    renderOrder={1} 
+                    renderOrder={100} 
                     worldUnits 
                 />
             )}
@@ -764,7 +787,7 @@ const StrokeComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSel
                 transparent={!isSolid} 
                 depthTest={true} 
                 depthWrite={isSolid} 
-                renderOrder={2} 
+                renderOrder={isSelected ? 101 : 2} 
                 worldUnits 
             />
             {data.strokeData.filled && <FilledStrokeMesh points={points} color={data.material.color} opacity={data.material.opacity ?? 1} />}
@@ -1334,7 +1357,8 @@ const SceneContent = ({
     cameraAction, onCameraActionHandled, exportRef,
     onCameraDirectionUpdate, onUndo, onRedo, fitViewTrigger, isoViewTrigger,
     objectsGroupRef, onLassoPointsChange, onFOVDisplayChange,
-    isGridVisible = true, backgroundColor = '#ffffff', onPickColorAndThickness
+    isGridVisible = true, backgroundColor = '#ffffff', onPickColorAndThickness,
+    morphRadius = 0.5, morphIntensity = 0.5, onMorphStroke, onMorphComplete
 }: SceneProps & { objectsGroupRef: React.RefObject<THREE.Group> }) => {
     const { scene, camera, gl, raycaster, pointer } = useThree();
     const currentPoints = useRef<THREE.Vector3[]>([]);
@@ -1350,6 +1374,8 @@ const SceneContent = ({
 
     // Eraser visual cursor position in 3D
     const [eraserCursorPos, setEraserCursorPos] = useState<THREE.Vector3 | null>(null);
+    // Morph visual cursor position in 3D
+    const [morphCursor, setMorphCursor] = useState<{ position: THREE.Vector3; normal: THREE.Vector3 } | null>(null);
     const fovTimerRef = useRef<any>(null);
 
     // Camera Controls
@@ -2072,6 +2098,186 @@ const SceneContent = ({
         };
     }, [activeTool, camera, gl, objects, onLassoSelect]);
 
+    // --- DEDICATED STROKE SCULPT / MORPH TOOL LISTENER (View-Plane Continuous Deform) ---
+    useEffect(() => {
+        if (activeTool !== 'morph') {
+            setMorphCursor(null);
+            return;
+        }
+
+        const dom = gl.domElement;
+        const originalCursor = dom.style.cursor;
+        const originalTouchAction = dom.style.touchAction;
+        dom.style.cursor = 'crosshair';
+        dom.style.touchAction = 'none';
+
+        let isMorphing = false;
+        let prevPlanePoint = new THREE.Vector3();
+        const morphPlane = new THREE.Plane();
+        const affectedStrokes = new Map<string, { 
+            currentPoints: THREE.Vector3[]; 
+            invMatrix: THREE.Matrix4;
+            hasChanged: boolean;
+        }>();
+
+        const getRayIntersection = (clientX: number, clientY: number, plane: THREE.Plane) => {
+            const rect = dom.getBoundingClientRect();
+            const mouse = new THREE.Vector2(
+                ((clientX - rect.left) / rect.width) * 2 - 1,
+                -((clientY - rect.top) / rect.height) * 2 + 1
+            );
+            const ray = new THREE.Raycaster();
+            ray.setFromCamera(mouse, camera);
+            const pt = new THREE.Vector3();
+            if (ray.ray.intersectPlane(plane, pt)) {
+                return pt;
+            }
+            return null;
+        };
+
+        const onDown = (e: PointerEvent) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            if (e.pointerType === 'touch') return; // Fingers navigate scene, stylus/pen/mouse morphs!
+
+            if (controlsRef.current) controlsRef.current.enabled = false;
+            isMorphing = true;
+
+            const vForward = new THREE.Vector3();
+            camera.getWorldDirection(vForward);
+            const planeNormal = vForward.clone().negate();
+
+            const rect = dom.getBoundingClientRect();
+            const mouse = new THREE.Vector2(
+                ((e.clientX - rect.left) / rect.width) * 2 - 1,
+                -((e.clientY - rect.top) / rect.height) * 2 + 1
+            );
+            const ray = new THREE.Raycaster();
+            ray.setFromCamera(mouse, camera);
+
+            const hits = ray.intersectObjects(scene.children, true);
+            const hit = hits.find(h => h.object.type === 'Mesh' || (h.object as any).isLine);
+            let startPoint: THREE.Vector3;
+            if (hit) {
+                startPoint = hit.point.clone();
+            } else {
+                const d = controlsRef.current ? camera.position.distanceTo(controlsRef.current.target) : 10;
+                startPoint = ray.ray.origin.clone().addScaledVector(ray.ray.direction, d);
+            }
+
+            morphPlane.setFromNormalAndCoplanarPoint(planeNormal, startPoint);
+            prevPlanePoint.copy(startPoint);
+
+            const targetStrokes = objects.filter(o => {
+                if (o.type !== 'stroke' || !o.strokeData || !o.strokeData.points) return false;
+                if (lockedLayerIds.includes(o.layerId)) return false;
+                if (!visibleLayerIds.includes(o.layerId)) return false;
+                if (selectedIds.length > 0) return selectedIds.includes(o.id);
+                return true;
+            });
+
+            affectedStrokes.clear();
+            targetStrokes.forEach(s => {
+                const pos = new THREE.Vector3(s.position.x, s.position.y, s.position.z);
+                const rot = new THREE.Euler(s.rotation.x, s.rotation.y, s.rotation.z);
+                const sc = new THREE.Vector3(s.scale.x, s.scale.y, s.scale.z);
+                const worldMat = new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(rot), sc);
+                const invMat = worldMat.clone().invert();
+                const worldPts = s.strokeData!.points.map(p => new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(worldMat));
+
+                affectedStrokes.set(s.id, {
+                    currentPoints: worldPts,
+                    invMatrix: invMat,
+                    hasChanged: false
+                });
+            });
+        };
+
+        const onMove = (e: PointerEvent) => {
+            const vForward = new THREE.Vector3();
+            camera.getWorldDirection(vForward);
+            const planeNormal = vForward.clone().negate();
+
+            const currPlane = isMorphing ? morphPlane : (() => {
+                const d = controlsRef.current ? camera.position.distanceTo(controlsRef.current.target) : 10;
+                const planePt = camera.position.clone().addScaledVector(vForward, d);
+                return new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, planePt);
+            })();
+
+            const currPt = getRayIntersection(e.clientX, e.clientY, currPlane);
+            if (currPt) {
+                setMorphCursor({ position: currPt, normal: planeNormal });
+            }
+
+            if (!isMorphing || !currPt) return;
+
+            const delta = currPt.clone().sub(prevPlanePoint);
+            if (delta.lengthSq() < 0.000001) return;
+
+            affectedStrokes.forEach((strokeInfo, strokeId) => {
+                let strokeModified = false;
+                const radius = morphRadius || 0.5;
+                const intensity = morphIntensity || 0.5;
+
+                for (let i = 0; i < strokeInfo.currentPoints.length; i++) {
+                    const pt = strokeInfo.currentPoints[i];
+                    const dist = pt.distanceTo(prevPlanePoint);
+                    if (dist < radius) {
+                        const factor = 1 - (dist / radius);
+                        const weight = factor * factor * intensity;
+                        pt.addScaledVector(delta, weight);
+                        strokeModified = true;
+                    }
+                }
+
+                if (strokeModified) {
+                    strokeInfo.hasChanged = true;
+                    const localPts = strokeInfo.currentPoints.map(p => p.clone().applyMatrix4(strokeInfo.invMatrix));
+                    if (onMorphStroke) {
+                        onMorphStroke(strokeId, localPts);
+                    }
+                }
+            });
+
+            prevPlanePoint.copy(currPt);
+        };
+
+        const onUp = () => {
+            if (!isMorphing) return;
+            isMorphing = false;
+            if (controlsRef.current) controlsRef.current.enabled = true;
+
+            const updates: { id: string; points: Vector3[] }[] = [];
+            affectedStrokes.forEach((info, id) => {
+                if (info.hasChanged) {
+                    const localPts = info.currentPoints.map(p => {
+                        const local = p.clone().applyMatrix4(info.invMatrix);
+                        return { x: local.x, y: local.y, z: local.z };
+                    });
+                    updates.push({ id, points: localPts });
+                }
+            });
+
+            if (updates.length > 0 && onMorphComplete) {
+                onMorphComplete(updates);
+            }
+            affectedStrokes.clear();
+        };
+
+        dom.addEventListener('pointerdown', onDown);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+
+        return () => {
+            dom.style.cursor = originalCursor;
+            dom.style.touchAction = originalTouchAction;
+            dom.removeEventListener('pointerdown', onDown);
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            if (controlsRef.current) controlsRef.current.enabled = true;
+            setMorphCursor(null);
+        };
+    }, [activeTool, camera, gl, scene, objects, morphRadius, morphIntensity, visibleLayerIds, lockedLayerIds, selectedIds, onMorphStroke, onMorphComplete]);
+
     // Helper: 2D Screen-Space View-Aligned Stroke Eraser (strictly strokes, never geometries)
     const eraseStrokesAt2DPointer = useCallback((clientX: number, clientY: number) => {
         if (activeTool !== 'eraser') return;
@@ -2293,21 +2499,35 @@ const SceneContent = ({
     }, [activeTool, raycaster, scene, currentBrushSmoothing, eraserCursorPos, camera, gl, eraseStrokesAt2DPointer]);
 
     const handlePointerUp = useCallback(() => {
-        if (activeTool === 'draw-plane' || activeTool === 'lasso') return;
+        if (activeTool === 'draw-plane' || activeTool === 'lasso' || activeTool === 'morph') return;
 
         if (isDrawing.current) {
-            if (activeTool === 'brush') {
-                 let finalPoints = currentPoints.current;
+            isDrawing.current = false;
+            const finalPoints = [...currentPoints.current];
+            currentPoints.current = [];
+            setPreviewPath([]);
+            if (controlsRef.current) controlsRef.current.enabled = true;
+
+            if (activeTool === 'brush' && finalPoints.length >= 2) {
                  const cameraDir = new THREE.Vector3();
                  camera.getWorldDirection(cameraDir);
                  onStrokeComplete(finalPoints, cameraDir);
             }
-            isDrawing.current = false;
-            currentPoints.current = [];
-            setPreviewPath([]);
-            if (controlsRef.current) controlsRef.current.enabled = true;
         }
     }, [activeTool, onStrokeComplete, camera]);
+
+    // Safety window listener: catches pointer releases anywhere (outside canvas or empty space)
+    useEffect(() => {
+        const handleWindowPointerUp = () => {
+            if (isDrawing.current && activeTool === 'brush') {
+                handlePointerUp();
+            }
+        };
+        window.addEventListener('pointerup', handleWindowPointerUp);
+        return () => {
+            window.removeEventListener('pointerup', handleWindowPointerUp);
+        };
+    }, [activeTool, handlePointerUp]);
 
     // Background interaction: deselect when touching empty screen (donde no hay objeto) without dragging
     const handleMiss = (e: any) => {
@@ -2465,7 +2685,7 @@ const SceneContent = ({
                             );
                         }
                         if (o.type === 'import') return <ImportedMeshComponent {...props} />;
-                        if (o.type === 'image') return <ImageComponent {...props} />;
+                        if (o.type === 'image') return <SafeLoader><ImageComponent {...props} /></SafeLoader>;
                         if (o.type === 'stroke') return <StrokeComponent {...props} />;
                         if (o.type === 'loft') return <LoftComponent {...props} allObjects={objects} />;
                         if (o.type === 'extrusion') return <ExtrusionComponent {...props} />;
@@ -2560,9 +2780,10 @@ const SceneContent = ({
                             if (mesh !== multiProxyTarget) setMultiProxyTarget(mesh);
                         }} 
                         position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]}
-                        visible={false}
+                        visible={true}
                     >
                         <boxGeometry args={[0.01, 0.01, 0.01]} />
+                        <meshBasicMaterial visible={false} />
                     </mesh>
                     {multiProxyTarget && (
                         <TransformControls 
@@ -2708,6 +2929,14 @@ const SceneContent = ({
                 <mesh position={eraserCursorPos} quaternion={camera.quaternion}>
                     <ringGeometry args={[(eraserSize || currentBrushSize || 0.2) * 0.92, eraserSize || currentBrushSize || 0.2, 32]} />
                     <meshBasicMaterial color="#ef4444" side={THREE.DoubleSide} transparent opacity={0.8} depthTest={false} />
+                </mesh>
+            )}
+
+            {/* VISUAL MORPH CURSOR */}
+            {activeTool === 'morph' && morphCursor && (
+                <mesh position={morphCursor.position} quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), morphCursor.normal)}>
+                    <ringGeometry args={[Math.max(0.01, (morphRadius || 0.5) - 0.02), morphRadius || 0.5, 36]} />
+                    <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} transparent opacity={0.7} depthTest={false} />
                 </mesh>
             )}
 

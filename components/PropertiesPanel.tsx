@@ -327,7 +327,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
         let fields: {label: string, key: string, min?: number, max?: number, step?: number, isExtrusion?: boolean}[] = [];
         
-        if (object.type === 'box' || object.type === 'plane') {
+        if (object.type === 'box' || object.type === 'plane' || object.type === 'image') {
             fields = [
                 { label: 'Width', key: 'width', min: 0.5, max: 100, step: 0.5 },
                 { label: 'Height', key: 'height', min: 0.5, max: 100, step: 0.5 },
