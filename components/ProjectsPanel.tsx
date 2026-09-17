@@ -5,6 +5,7 @@ import { ChevronDown, Package, Library, Upload, Plus, Download, Trash2, FolderPl
 import { v4 as generateId } from 'uuid';
 import { Language, getTranslation } from '../utils/translations';
 import { saveOrShareFile } from '../utils/downloadHelper';
+import { saveProjectToDB, getAllProjectsFromDB, deleteProjectFromDB } from '../utils/dbStorage';
 
 interface ProjectsPanelProps {
     isOpen: boolean;
@@ -65,24 +66,46 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
         }
     }, [isOpen]);
 
-    const loadProjectsFromStorage = () => {
+    const loadProjectsFromStorage = async () => {
+        try {
+            const dbProjects = await getAllProjectsFromDB();
+            if (dbProjects && dbProjects.length > 0) {
+                setProjects(dbProjects.sort((a, b) => b.updatedAt - a.updatedAt));
+                return;
+            }
+        } catch (e) {
+            console.warn("IndexedDB load failed in ProjectsPanel, falling back to localStorage", e);
+        }
+
         try {
             const data = localStorage.getItem(STORAGE_KEY);
             if (data) {
                 const parsed: Project[] = JSON.parse(data);
                 setProjects(parsed.sort((a, b) => b.updatedAt - a.updatedAt));
+                for (const p of parsed) {
+                    saveProjectToDB(p).catch(() => {});
+                }
             }
         } catch (e) {
             console.error("Failed to load projects from localStorage", e);
         }
     };
 
-    const saveProjectsToStorage = (updatedList: Project[]) => {
+    const saveProjectsToStorage = async (updatedList: Project[]) => {
+        setProjects(updatedList.sort((a, b) => b.updatedAt - a.updatedAt));
+        for (const p of updatedList) {
+            await saveProjectToDB(p).catch(console.warn);
+        }
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
-            setProjects(updatedList.sort((a, b) => b.updatedAt - a.updatedAt));
         } catch (e) {
-            console.error("Failed to save projects to localStorage", e);
+            console.warn("localStorage quota exceeded in ProjectsPanel, trying thumbnail pruning...", e);
+            try {
+                const pruned = updatedList.map((p, idx) => idx === 0 ? p : { ...p, thumbnail: '' });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+            } catch (e2) {
+                console.warn("localStorage full, projects safely preserved in IndexedDB");
+            }
         }
     };
 
@@ -118,8 +141,9 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
         showToast(t('projectSaved', { name: nameToUse }));
     };
 
-    const handleDeleteProject = (id: string, name: string) => {
+    const handleDeleteProject = async (id: string, name: string) => {
         if (window.confirm(t('deleteConfirm', { name }))) {
+            await deleteProjectFromDB(id).catch(console.warn);
             const updated = projects.filter(p => p.id !== id);
             saveProjectsToStorage(updated);
             showToast(t('projectDeleted', { name }));

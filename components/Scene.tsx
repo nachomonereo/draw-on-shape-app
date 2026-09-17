@@ -1029,6 +1029,8 @@ const GroupComponent = React.forwardRef<THREE.Group, { data: SceneObject; isSele
             scale={[data.scale.x, data.scale.y, data.scale.z]}
             onClick={(e) => {
                 if (!isLocked) {
+                    const pType = (e as any)?.pointerType || (e as any)?.nativeEvent?.pointerType;
+                    if (pType === 'touch') return;
                     e.stopPropagation();
                     onSelect(e);
                 }
@@ -1526,15 +1528,49 @@ const SceneContent = ({
     const [multiProxyTarget, setMultiProxyTarget] = useState<THREE.Mesh | null>(null);
     const multiTransformControlsRef = useRef<any>(null);
     const initialCentroidRef = useRef<THREE.Vector3 | null>(null);
-    const initialMultiStatesRef = useRef<Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>>(new Map());
+    const initialMultiStatesRef = useRef<Map<string, { worldPos: THREE.Vector3; worldQuat: THREE.Quaternion; worldScale: THREE.Vector3; parentInvMat: THREE.Matrix4 | null }>>(new Map());
 
     useEffect(() => {
         if (multiProxyMeshRef.current && multiCentroid && !isTransformingRef.current) {
             multiProxyMeshRef.current.position.copy(multiCentroid);
             multiProxyMeshRef.current.rotation.set(0, 0, 0);
             multiProxyMeshRef.current.scale.set(1, 1, 1);
+            multiProxyMeshRef.current.updateMatrixWorld(true);
         }
     }, [multiCentroid]);
+
+    const captureInitialMultiStates = useCallback(() => {
+        if (!multiProxyMeshRef.current || !multiCentroid) return;
+        initialCentroidRef.current = multiCentroid.clone();
+        multiProxyMeshRef.current.position.copy(multiCentroid);
+        multiProxyMeshRef.current.rotation.set(0, 0, 0);
+        multiProxyMeshRef.current.scale.set(1, 1, 1);
+        multiProxyMeshRef.current.updateMatrixWorld(true);
+
+        const map = new Map<string, { worldPos: THREE.Vector3; worldQuat: THREE.Quaternion; worldScale: THREE.Vector3; parentInvMat: THREE.Matrix4 | null }>();
+        selectedIds.forEach(id => {
+            const obj = objects.find(o => o.id === id);
+            if (obj) {
+                const wt = getObjectWorldTransform(obj, objects);
+                let parentInvMat: THREE.Matrix4 | null = null;
+                if (obj.parentId) {
+                    const parent = objects.find(p => p.id === obj.parentId);
+                    if (parent) {
+                        const pwt = getObjectWorldTransform(parent, objects);
+                        const pMat = new THREE.Matrix4().compose(pwt.position, pwt.quaternion, pwt.scale);
+                        parentInvMat = pMat.invert();
+                    }
+                }
+                map.set(id, {
+                    worldPos: wt.position,
+                    worldQuat: wt.quaternion,
+                    worldScale: wt.scale,
+                    parentInvMat
+                });
+            }
+        });
+        initialMultiStatesRef.current = map;
+    }, [multiCentroid, selectedIds, objects]);
 
     useEffect(() => {
         const mtc = multiTransformControlsRef.current;
@@ -1546,26 +1582,7 @@ const SceneContent = ({
                 controlsRef.current.enabled = !isDragging;
             }
             if (isDragging) {
-                if (multiProxyMeshRef.current && multiCentroid) {
-                    initialCentroidRef.current = multiCentroid.clone();
-                    multiProxyMeshRef.current.position.copy(multiCentroid);
-                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
-                    multiProxyMeshRef.current.scale.set(1, 1, 1);
-                    multiProxyMeshRef.current.updateMatrixWorld(true);
-
-                    const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
-                    selectedIds.forEach(id => {
-                        const obj = objects.find(o => o.id === id);
-                        if (obj) {
-                            map.set(id, {
-                                position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
-                                rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
-                                scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
-                            });
-                        }
-                    });
-                    initialMultiStatesRef.current = map;
-                }
+                captureInitialMultiStates();
                 onTransformStart();
             } else {
                 initialCentroidRef.current = null;
@@ -1582,7 +1599,7 @@ const SceneContent = ({
         return () => {
             mtc.removeEventListener('dragging-changed', handleDragging);
         };
-    }, [selectedIds, objects, multiCentroid, onTransformStart, onTransformEnd]);
+    }, [captureInitialMultiStates, multiCentroid, onTransformStart, onTransformEnd]);
 
     // Gesture Callbacks: Snap to Closest Canonical View in 100% Orthographic Projection (Sin Perspectiva)
     const handleSnapView = useCallback(() => {
@@ -2223,7 +2240,8 @@ const SceneContent = ({
                     const dist = pt.distanceTo(prevPlanePoint);
                     if (dist < radius) {
                         const factor = 1 - (dist / radius);
-                        const weight = factor * factor * intensity;
+                        const smoothFalloff = factor * factor * (3 - 2 * factor);
+                        const weight = smoothFalloff * ((morphIntensity ?? 1.0) * 3.5);
                         pt.addScaledVector(delta, weight);
                         strokeModified = true;
                     }
@@ -2639,6 +2657,10 @@ const SceneContent = ({
                             isLocked: isLock,
                             onSelect: (idOrEvent: any) => {
                                 if (!isLock) {
+                                    // STRICT: Fingers (touch) should NEVER select objects, only stylus/pen and mouse!
+                                    const pType = idOrEvent?.pointerType || idOrEvent?.nativeEvent?.pointerType;
+                                    if (pType === 'touch') return;
+
                                     if (activeTool === 'pipette') {
                                         if (idOrEvent && typeof idOrEvent !== 'string' && idOrEvent.stopPropagation) {
                                             idOrEvent.stopPropagation();
@@ -2779,7 +2801,6 @@ const SceneContent = ({
                             multiProxyMeshRef.current = mesh;
                             if (mesh !== multiProxyTarget) setMultiProxyTarget(mesh);
                         }} 
-                        position={[multiCentroid.x, multiCentroid.y, multiCentroid.z]}
                         visible={true}
                     >
                         <boxGeometry args={[0.01, 0.01, 0.01]} />
@@ -2794,26 +2815,7 @@ const SceneContent = ({
                             onMouseDown={() => {
                                 isTransformingRef.current = true;
                                 if (controlsRef.current) controlsRef.current.enabled = false;
-                                if (multiProxyMeshRef.current && multiCentroid) {
-                                    initialCentroidRef.current = multiCentroid.clone();
-                                    multiProxyMeshRef.current.position.copy(multiCentroid);
-                                    multiProxyMeshRef.current.rotation.set(0, 0, 0);
-                                    multiProxyMeshRef.current.scale.set(1, 1, 1);
-                                    multiProxyMeshRef.current.updateMatrixWorld(true);
-
-                                    const map = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>();
-                                    selectedIds.forEach(id => {
-                                        const obj = objects.find(o => o.id === id);
-                                        if (obj) {
-                                            map.set(id, {
-                                                position: new THREE.Vector3(obj.position.x, obj.position.y, obj.position.z),
-                                                rotation: new THREE.Euler(obj.rotation.x, obj.rotation.y, obj.rotation.z),
-                                                scale: new THREE.Vector3(obj.scale.x, obj.scale.y, obj.scale.z)
-                                            });
-                                        }
-                                    });
-                                    initialMultiStatesRef.current = map;
-                                }
+                                captureInitialMultiStates();
                                 onTransformStart();
                             }}
                             onMouseUp={() => {
@@ -2846,50 +2848,86 @@ const SceneContent = ({
                                     if (!obj || !init) return { id, updates: {} };
 
                                     if (mode === 'translate') {
+                                        const newWorldPos = init.worldPos.clone().add(deltaPos);
+                                        if (init.parentInvMat) {
+                                            newWorldPos.applyMatrix4(init.parentInvMat);
+                                        }
                                         return {
                                             id,
                                             updates: {
-                                                position: {
-                                                    x: init.position.x + deltaPos.x,
-                                                    y: init.position.y + deltaPos.y,
-                                                    z: init.position.z + deltaPos.z
-                                                }
+                                                position: { x: newWorldPos.x, y: newWorldPos.y, z: newWorldPos.z }
                                             }
                                         };
                                     } else if (mode === 'rotate') {
-                                        const offset = init.position.clone().sub(initialCentroid);
+                                        const offset = init.worldPos.clone().sub(initialCentroid);
                                         offset.applyQuaternion(deltaQuat);
-                                        const newPos = initialCentroid.clone().add(offset);
+                                        const newWorldPos = initialCentroid.clone().add(offset);
+                                        const newWorldQuat = deltaQuat.clone().multiply(init.worldQuat);
 
-                                        const initQuat = new THREE.Quaternion().setFromEuler(init.rotation);
-                                        const newQuat = deltaQuat.clone().multiply(initQuat);
-                                        const newEuler = new THREE.Euler().setFromQuaternion(newQuat);
-
-                                        return {
-                                            id,
-                                            updates: {
-                                                position: { x: newPos.x, y: newPos.y, z: newPos.z },
-                                                rotation: { x: newEuler.x, y: newEuler.y, z: newEuler.z }
-                                            }
-                                        };
+                                        if (init.parentInvMat) {
+                                            const worldMatrix = new THREE.Matrix4().compose(newWorldPos, newWorldQuat, init.worldScale);
+                                            const localMatrix = init.parentInvMat.clone().multiply(worldMatrix);
+                                            const localPos = new THREE.Vector3();
+                                            const localQuat = new THREE.Quaternion();
+                                            const localScale = new THREE.Vector3();
+                                            localMatrix.decompose(localPos, localQuat, localScale);
+                                            const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
+                                            return {
+                                                id,
+                                                updates: {
+                                                    position: { x: localPos.x, y: localPos.y, z: localPos.z },
+                                                    rotation: { x: localEuler.x, y: localEuler.y, z: localEuler.z }
+                                                }
+                                            };
+                                        } else {
+                                            const newEuler = new THREE.Euler().setFromQuaternion(newWorldQuat);
+                                            return {
+                                                id,
+                                                updates: {
+                                                    position: { x: newWorldPos.x, y: newWorldPos.y, z: newWorldPos.z },
+                                                    rotation: { x: newEuler.x, y: newEuler.y, z: newEuler.z }
+                                                }
+                                            };
+                                        }
                                     } else if (mode === 'scale') {
-                                        const offset = init.position.clone().sub(initialCentroid);
+                                        const offset = init.worldPos.clone().sub(initialCentroid);
                                         offset.x *= proxyScale.x;
                                         offset.y *= proxyScale.y;
                                         offset.z *= proxyScale.z;
-                                        const newPos = initialCentroid.clone().add(offset);
+                                        const newWorldPos = initialCentroid.clone().add(offset);
 
-                                        return {
-                                            id,
-                                            updates: {
-                                                position: { x: newPos.x, y: newPos.y, z: newPos.z },
-                                                scale: {
-                                                    x: init.scale.x * proxyScale.x,
-                                                    y: init.scale.y * proxyScale.y,
-                                                    z: init.scale.z * proxyScale.z
+                                        if (init.parentInvMat) {
+                                            const localScale = new THREE.Vector3(
+                                                init.worldScale.x * proxyScale.x,
+                                                init.worldScale.y * proxyScale.y,
+                                                init.worldScale.z * proxyScale.z
+                                            );
+                                            const worldMatrix = new THREE.Matrix4().compose(newWorldPos, init.worldQuat, localScale);
+                                            const localMatrix = init.parentInvMat.clone().multiply(worldMatrix);
+                                            const localPos = new THREE.Vector3();
+                                            const localQuat = new THREE.Quaternion();
+                                            const finalScale = new THREE.Vector3();
+                                            localMatrix.decompose(localPos, localQuat, finalScale);
+                                            return {
+                                                id,
+                                                updates: {
+                                                    position: { x: localPos.x, y: localPos.y, z: localPos.z },
+                                                    scale: { x: finalScale.x, y: finalScale.y, z: finalScale.z }
                                                 }
-                                            }
-                                        };
+                                            };
+                                        } else {
+                                            return {
+                                                id,
+                                                updates: {
+                                                    position: { x: newWorldPos.x, y: newWorldPos.y, z: newWorldPos.z },
+                                                    scale: {
+                                                        x: init.worldScale.x * proxyScale.x,
+                                                        y: init.worldScale.y * proxyScale.y,
+                                                        z: init.worldScale.z * proxyScale.z
+                                                    }
+                                                }
+                                            };
+                                        }
                                     }
 
                                     return { id, updates: {} };

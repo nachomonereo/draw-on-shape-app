@@ -17,6 +17,7 @@ import { App as CapApp } from '@capacitor/app';
 import { User, Save, FileText, LayoutTemplate, Copy, Check, Pen, ChevronLeft, ChevronRight, Layers as LayersIcon } from 'lucide-react';
 import * as THREE from 'three';
 import { ColorPickerModal } from './components/ColorPickerModal';
+import { saveProjectToDB, getAllProjectsFromDB, saveAllComponentsToDB, getAllComponentsFromDB } from './utils/dbStorage';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -198,7 +199,7 @@ export default function App() {
     
     // Morph Tool (Stroke Sculpt)
     const [morphRadius, setMorphRadius] = useState<number>(0.5);
-    const [morphIntensity, setMorphIntensity] = useState<number>(0.5); 
+    const [morphIntensity, setMorphIntensity] = useState<number>(1.0); 
 
     // Background Color & Grid
     const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
@@ -289,18 +290,26 @@ export default function App() {
         }
     });
 
+    useEffect(() => {
+        getAllComponentsFromDB().then(dbComps => {
+            if (dbComps && dbComps.length > 0) {
+                setCustomComponents(dbComps);
+            }
+        }).catch(() => {});
+    }, []);
+
     const saveComponentsToStorage = (list: SceneComponent[]) => {
+        setCustomComponents(list);
+        saveAllComponentsToDB(list).catch(console.warn);
         try {
             localStorage.setItem('draw_on_shape_components_v1', JSON.stringify(list));
-            setCustomComponents(list);
         } catch (e) {
             console.warn("Failed to save components to localStorage, pruning thumbnails...", e);
             try {
                 const pruned = list.map((c, idx) => idx === 0 ? c : { ...c, thumbnail: '' });
                 localStorage.setItem('draw_on_shape_components_v1', JSON.stringify(pruned));
-                setCustomComponents(pruned);
             } catch (e2) {
-                console.error("Critical: Could not save components", e2);
+                console.warn("localStorage full, components saved in IndexedDB");
             }
         }
     };
@@ -1190,6 +1199,29 @@ export default function App() {
                     w = 4 * aspect;
                 }
 
+                // Downscale large images to max 1600px to avoid memory & storage quota issues
+                let optimizedDataUrl = dataUrl;
+                const maxDim = 1600;
+                if (naturalW > maxDim || naturalH > maxDim) {
+                    let tw = naturalW;
+                    let th = naturalH;
+                    if (tw > th) {
+                        th = Math.round((th * maxDim) / tw);
+                        tw = maxDim;
+                    } else {
+                        tw = Math.round((tw * maxDim) / th);
+                        th = maxDim;
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = tw;
+                    canvas.height = th;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                        ctx.drawImage(img, 0, 0, tw, th);
+                        optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    }
+                }
+
                 const targetLayerId = ensureActiveLayerType('geometry');
                 const imageObj: SceneObject = {
                     id: generateId(),
@@ -1197,26 +1229,26 @@ export default function App() {
                     name: file.name.replace(/\.[^/.]+$/, "") || 'Image Plane',
                     type: 'image',
                     visible: true,
-                    position: { x: 0, y: h * 0.5, z: 0 },
+                    position: { x: 0, y: 0, z: 0 },
                     rotation: { x: 0, y: 0, z: 0 },
                     scale: { x: 1, y: 1, z: 1 },
                     material: {
                         color: '#ffffff',
                         roughness: 0.5,
                         metalness: 0.0,
-                        opacity: 0.85
+                        opacity: 1.0
                     },
                     params: {
                         width: parseFloat(w.toFixed(2)),
                         height: parseFloat(h.toFixed(2))
                     },
-                    url: dataUrl
+                    url: optimizedDataUrl
                 };
 
                 addToHistory([...sceneObjectsRef.current, imageObj]);
                 setSelectedIds([imageObj.id]);
                 handleToolChange('select');
-                showNotification(language === 'en' ? "Image reference plane added" : "Plano de imagen de referencia añadido");
+                showNotification(language === 'en' ? "Image reference plane added" : "Plano de imagen añadido");
             };
             img.src = dataUrl;
         };
@@ -1385,7 +1417,7 @@ export default function App() {
     // Project Internal Saving
     const STORAGE_KEY = 'draw_on_shape_projects_v1';
 
-    const saveProjectInternal = (customName?: string) => {
+    const saveProjectInternal = async (customName?: string) => {
         try {
             const nameToUse = customName || projectName || (language === 'en' ? "Untitled" : "Sin Título");
             let thumbnail = '';
@@ -1397,12 +1429,12 @@ export default function App() {
                 }
             }
 
+            const camState = exportRef.current?.getCameraState?.();
+
             const data = localStorage.getItem(STORAGE_KEY);
             let projectsList: Project[] = data ? JSON.parse(data) : [];
 
             const existingIdx = projectsList.findIndex(p => p.name.toLowerCase() === nameToUse.toLowerCase());
-            
-            const camState = exportRef.current?.getCameraState?.();
 
             const updatedProject: Project = {
                 id: existingIdx >= 0 ? projectsList[existingIdx].id : generateId(),
@@ -1423,18 +1455,35 @@ export default function App() {
                 isGridVisible: isGridVisible
             };
 
-            if (existingIdx >= 0) {
-                projectsList[existingIdx] = updatedProject;
-            } else {
-                projectsList.unshift(updatedProject);
-            }
+            // 1. Primary high-capacity storage: IndexedDB
+            await saveProjectToDB(updatedProject);
 
+            // 2. Best-effort mirror to localStorage
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(projectsList));
-            } catch (quotaErr) {
-                console.warn("Quota exceeded on saveProjectInternal, stripping old thumbnails...", quotaErr);
-                const pruned = projectsList.map((p, idx) => idx === 0 ? p : { ...p, thumbnail: '' });
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+                if (existingIdx >= 0) {
+                    projectsList[existingIdx] = updatedProject;
+                } else {
+                    projectsList.unshift(updatedProject);
+                }
+
+                try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(projectsList));
+                } catch (quotaErr) {
+                    console.warn("Quota exceeded on saveProjectInternal, stripping thumbnails...", quotaErr);
+                    const pruned = projectsList.map((p, idx) => idx === 0 ? p : { ...p, thumbnail: '' });
+                    try {
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+                    } catch (quotaErr2) {
+                        const noThumbs = projectsList.map(p => ({ ...p, thumbnail: '' }));
+                        try {
+                            localStorage.setItem(STORAGE_KEY, JSON.stringify(noThumbs));
+                        } catch (quotaErr3) {
+                            console.warn("localStorage quota exceeded, project saved safely in IndexedDB");
+                        }
+                    }
+                }
+            } catch (mirrorErr) {
+                console.warn("localStorage mirror failed:", mirrorErr);
             }
 
             setIsMenuOpen(false);
@@ -2092,10 +2141,6 @@ export default function App() {
                             <button onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); showNotification("Select 3D model (OBJ, STL, GLB, 3DM)"); }} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 text-xs text-left"><Icons.Upload size={14} /> Import 3D Model (OBJ, STL)</button>
                          </div>
                      )}
-                     <div className="flex bg-white rounded-lg p-1 border border-gray-200 shadow-sm mt-2 w-fit">
-                        <button onClick={undo} disabled={historyIndex === 0} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded" title="Undo (Ctrl+Z)"><Icons.Undo size={16} /></button>
-                        <button onClick={redo} disabled={historyIndex === history.length - 1} className="p-2 disabled:opacity-20 hover:bg-gray-50 rounded" title="Redo (Ctrl+Y)"><Icons.Redo size={16} /></button>
-                     </div>
                 </div>
             )}
 
@@ -2285,7 +2330,27 @@ export default function App() {
                             </div>
                         )}
 
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                             {/* UNDO / REDO (Attached to bottom toolbar on the left) */}
+                             <div className="flex bg-white/90 backdrop-blur rounded-2xl p-1.5 border border-gray-200 shadow-xl items-center gap-0.5 relative z-20">
+                                 <button 
+                                     onClick={undo} 
+                                     disabled={historyIndex === 0} 
+                                     className="p-2 disabled:opacity-25 hover:bg-gray-100 rounded-xl transition-colors text-gray-700 active:scale-95 cursor-pointer" 
+                                     title="Undo (Ctrl+Z)"
+                                 >
+                                     <Icons.Undo size={17} />
+                                 </button>
+                                 <button 
+                                     onClick={redo} 
+                                     disabled={historyIndex === history.length - 1} 
+                                     className="p-2 disabled:opacity-25 hover:bg-gray-100 rounded-xl transition-colors text-gray-700 active:scale-95 cursor-pointer" 
+                                     title="Redo (Ctrl+Y)"
+                                 >
+                                     <Icons.Redo size={17} />
+                                 </button>
+                             </div>
+
                              {/* MAIN TOOLBAR */}
                              <div className="flex bg-white/90 backdrop-blur rounded-2xl p-2 border border-gray-200 shadow-xl items-center gap-3 relative z-20">
                                 <ToolbarItem active={activeTool === 'select' || activeTool === 'lasso'} onClick={() => { handleToolChange('select'); setSelectionMode('replace'); }} icon={activeTool === 'lasso' ? Icons.Lasso : Icons.Select} tooltipText="Select & Transform" onHover={setHoverInfo} onLeave={() => setHoverInfo(null)}>
@@ -2318,68 +2383,68 @@ export default function App() {
                                              <button onClick={() => setEraserMode('partial')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'partial' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Partial Eraser"><Icons.Eraser size={16} /></button>
                                              <button onClick={() => setEraserMode('object')} className={`p-1.5 flex-1 flex items-center justify-center rounded ${eraserMode === 'object' ? 'bg-white shadow text-black' : 'text-gray-400'}`} title="Erase Entire Object"><Icons.Delete size={16} /></button>
                                          </div>
-                                         {eraserMode === 'partial' && (
-                                             <div className="flex flex-col gap-1 px-1">
-                                                 <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
-                                                     <span>THICKNESS</span>
-                                                     <span className="text-gray-600 font-mono">{(eraserSize * 10).toFixed(1)}</span>
-                                                 </div>
-                                                 <input 
-                                                     type="range" 
-                                                     min="0.05" 
-                                                     max="1.5" 
-                                                     step="0.05" 
-                                                     value={eraserSize} 
-                                                     onChange={(e) => setEraserSize(parseFloat(e.target.value))}
-                                                     className="w-full accent-red-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
-                                                 />
-                                             </div>
-                                         )}
-                                     </div>
-                                 </ToolbarItem>
+                                          {eraserMode === 'partial' && (
+                                              <div className="flex flex-col gap-1 px-1">
+                                                  <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
+                                                      <span>THICKNESS</span>
+                                                      <span className="text-gray-600 font-mono">{(eraserSize * 10).toFixed(1)}</span>
+                                                  </div>
+                                                  <input 
+                                                      type="range" 
+                                                      min="0.05" 
+                                                      max="1.5" 
+                                                      step="0.05" 
+                                                      value={eraserSize} 
+                                                      onChange={(e) => setEraserSize(parseFloat(e.target.value))}
+                                                      className="w-full accent-red-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
+                                                  />
+                                              </div>
+                                          )}
+                                      </div>
+                                  </ToolbarItem>
 
-                                 <ToolbarItem 
-                                     active={activeTool === 'morph'} 
-                                     onClick={() => { handleToolChange('morph'); setLoftSelection([]); setInstruction(language === 'en' ? "Drag to sculpt/deform strokes in view plane" : "Arrastra para deformar trazos en plano de visión"); }} 
-                                     icon={Icons.Morph} 
-                                     tooltipText={language === 'en' ? "Morph (Sculpt Strokes)" : "Deformar trazos (Morph)"} 
-                                     onHover={setHoverInfo} 
-                                     onLeave={() => setHoverInfo(null)}
-                                 >
-                                     <div className="flex flex-col gap-2 p-1 min-w-[150px]">
-                                         <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-1">Morph Sculpt</div>
-                                         <div className="flex flex-col gap-1 px-1">
-                                             <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
-                                                 <span>RADIUS</span>
-                                                 <span className="text-gray-600 font-mono">{morphRadius.toFixed(2)}</span>
-                                             </div>
-                                             <input 
-                                                 type="range" 
-                                                 min="0.1" 
-                                                 max="2.5" 
-                                                 step="0.05" 
-                                                 value={morphRadius} 
-                                                 onChange={(e) => setMorphRadius(parseFloat(e.target.value))}
-                                                 className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
-                                             />
-                                         </div>
-                                         <div className="flex flex-col gap-1 px-1">
-                                             <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
-                                                 <span>INTENSITY</span>
-                                                 <span className="text-gray-600 font-mono">{morphIntensity.toFixed(2)}</span>
-                                             </div>
-                                             <input 
-                                                 type="range" 
-                                                 min="0.05" 
-                                                 max="1.0" 
-                                                 step="0.05" 
-                                                 value={morphIntensity} 
-                                                 onChange={(e) => setMorphIntensity(parseFloat(e.target.value))}
-                                                 className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
-                                             />
-                                         </div>
-                                     </div>
-                                 </ToolbarItem>
+                                  <ToolbarItem 
+                                      active={activeTool === 'morph'} 
+                                      onClick={() => { handleToolChange('morph'); setLoftSelection([]); setInstruction(language === 'en' ? "Drag to sculpt/deform strokes in view plane" : "Arrastra para deformar trazos en plano de visión"); }} 
+                                      icon={Icons.Morph} 
+                                      tooltipText={language === 'en' ? "Morph (Sculpt Strokes)" : "Deformar trazos (Morph)"} 
+                                      onHover={setHoverInfo} 
+                                      onLeave={() => setHoverInfo(null)}
+                                  >
+                                      <div className="flex flex-col gap-2 p-1 min-w-[150px]">
+                                          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-1">Morph Sculpt</div>
+                                          <div className="flex flex-col gap-1 px-1">
+                                              <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
+                                                  <span>RADIUS</span>
+                                                  <span className="text-gray-600 font-mono">{morphRadius.toFixed(2)}</span>
+                                              </div>
+                                              <input 
+                                                  type="range" 
+                                                  min="0.1" 
+                                                  max="2.5" 
+                                                  step="0.05" 
+                                                  value={morphRadius} 
+                                                  onChange={(e) => setMorphRadius(parseFloat(e.target.value))}
+                                                  className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
+                                              />
+                                          </div>
+                                          <div className="flex flex-col gap-1 px-1">
+                                              <div className="flex justify-between items-center text-[10px] font-bold text-gray-400">
+                                                  <span>INTENSITY</span>
+                                                  <span className="text-gray-600 font-mono">{morphIntensity.toFixed(1)}</span>
+                                              </div>
+                                              <input 
+                                                  type="range" 
+                                                  min="0.2" 
+                                                  max="3.0" 
+                                                  step="0.1" 
+                                                  value={morphIntensity} 
+                                                  onChange={(e) => setMorphIntensity(parseFloat(e.target.value))}
+                                                  className="w-full accent-blue-500 cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none" 
+                                              />
+                                          </div>
+                                      </div>
+                                  </ToolbarItem>
                                 
                                 <div className="h-6 w-[1px] bg-gray-200" />
                                 

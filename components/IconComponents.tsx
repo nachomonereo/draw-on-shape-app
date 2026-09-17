@@ -35,6 +35,29 @@ const LoftIcon: React.FC<{ size?: number; className?: string }> = ({ size = 20, 
     </svg>
 );
 
+// Dedicated 3D Sculpt / Stroke Deform Icon
+const MorphSculptIcon: React.FC<{ size?: number; className?: string }> = ({ size = 20, className }) => (
+    <svg 
+        width={size} 
+        height={size} 
+        viewBox="0 0 24 24" 
+        fill="none" 
+        stroke="currentColor" 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        className={className}
+    >
+        {/* Deformed 3D curve with wave sculpt profile */}
+        <path d="M3 16c3-1 6-7 10-7s5 6 8 4" />
+        {/* Sculpting falloff indicator ring */}
+        <circle cx="13" cy="9" r="3.5" strokeDasharray="2 2" />
+        {/* Interactive push arrows */}
+        <path d="M13 3v2" />
+        <path d="M10 4l3-2 3 2" />
+    </svg>
+);
+
 export const Icons = {
     Box, Circle, Cylinder, Cone, Triangle, Square, Plane: Square, File,
     Select: MousePointer2,
@@ -72,5 +95,5 @@ export const Icons = {
     Package,
     ArrowDownToLine,
     Pipette,
-    Morph: Wand2
+    Morph: MorphSculptIcon
 };
